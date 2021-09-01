@@ -1,4 +1,4 @@
-# Dissertation
+# Dissertation: Informative censoring models for liver transplantation data
 
 Code Appendix
 
