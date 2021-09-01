@@ -1,0 +1,4369 @@
+---
+title: "Optimisation of MLEs (no covariates)"
+author: "Despina Konstantinidou"
+date: "07/07/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE )
+
+#packages
+library(flexsurv)
+library(survival)
+library(knitr)
+library(dplyr)
+library(tidyverse)
+library(haven)
+library(patchwork)
+library(broom)
+
+```
+
+
+```{r}
+#load data
+data <- read.table("liverdata.dat",fileEncoding = "UTF-8",header=TRUE,na=".")
+
+# simple correction for observed zero times
+data$survtime<-ifelse(data$survtime==0,data$survtime+0.5,data$survtime)
+
+data <- data.frame(data)
+
+#define dataset for optimisation
+data_optim<-data.frame(times=data$survtime,event=data$status)
+```
+
+# Log-likelihood
+
+```{r}
+loglikelihood2<-function(par,alpha,
+                         H_T,H_C,
+                         H_alpha,H_alpha_inv,h_alpha,log_h_alpha,
+                         log_h_C,log_h_T,h_C,h_T,
+                         dh_alpha,
+                         dtheta1_H_T,dtheta2_H_T,dtheta1_h_T,dtheta2_h_T,
+                         dgamma1_H_C,dgamma2_H_C,dgamma1_h_C,dgamma2_h_C,
+                         data){
+  
+  theta <- c(par[1],par[2])
+  gamma <- c(par[3],par[4])
+  
+  y <- data$times
+  beta <- data$event
+  
+  ll_vec<-  -H_alpha_inv(H_alpha(H_T(y,theta),alpha)+H_alpha(H_C(y,gamma),alpha),alpha) - 
+               log_h_alpha(H_alpha_inv(H_alpha(H_T(y,theta),alpha)+H_alpha(H_C(y,gamma),alpha),alpha),alpha) + 
+               log_h_alpha(H_C(y,gamma),alpha) + log_h_C(y,gamma) + 
+               beta*(log_h_alpha(H_T(y,theta),alpha)+log_h_T(y,theta)-log_h_alpha(H_C(y,gamma),alpha)-log_h_C(y,gamma))
+
+sum(ll_vec)
+}
+
+tol <- 1e-12 #optimisation tolerance
+```
+
+
+# Gradient
+
+
+```{r}
+grad<-function(par,alpha,
+               H_T,H_C,
+               H_alpha,H_alpha_inv,h_alpha,log_h_alpha,
+               log_h_C,log_h_T,h_C,h_T,
+               dh_alpha,
+               dtheta1_H_T,dtheta2_H_T,dtheta1_h_T,dtheta2_h_T,
+               dgamma1_H_C,dgamma2_H_C,dgamma1_h_C,dgamma2_h_C,
+               data){
+  
+  
+  y<-data$time
+  beta<-data$event
+  theta <- c(par[1],par[2])
+  gamma <- c(par[3],par[4])
+  
+  
+  
+  n1 <-h_alpha(H_T(y,theta),alpha)*dtheta1_H_T(y,theta)
+  
+  n2 <-h_alpha(H_T(y,theta),alpha)*dtheta2_H_T(y,theta)
+  
+  n3 <-h_alpha(H_C(y,gamma),alpha)*dgamma1_H_C(y,gamma)
+  
+  n4 <-h_alpha(H_C(y,gamma),alpha)*dgamma2_H_C(y,gamma)
+
+  
+  q <- H_alpha_inv(H_alpha(H_T(y,theta),alpha)+H_alpha(H_C(y,gamma),alpha),alpha)
+     
+  D <- h_alpha(q,alpha)
+  
+  E <- dh_alpha(q,alpha)
+  
+  
+  d1<- -(n1/D)*(1+E/D) +
+        beta*(dh_alpha(H_T(y,theta),alpha)*dtheta1_H_T(y,theta)/h_alpha(H_T(y,theta),alpha)+dtheta1_h_T(y,theta)/h_T(y,theta)) 
+  
+  d2<- -(n2/D)*(1+E/D) +
+        beta*(dh_alpha(H_T(y,theta),alpha)*dtheta2_H_T(y,theta)/h_alpha(H_T(y,theta),alpha)+dtheta2_h_T(y,theta)/h_T(y,theta)) 
+    
+  d3<- -(n3/D)*(1+E/D) +
+        (1-beta)*(dh_alpha(H_C(y,gamma),alpha)*dgamma1_H_C(y,gamma)/h_alpha(H_C(y,gamma),alpha)+dgamma1_h_C(y,gamma)/h_C(y,gamma))
+    
+  d4<- -(n4/D)*(1+E/D) +
+        (1-beta)*(dh_alpha(H_C(y,gamma),alpha)*dgamma2_H_C(y,gamma)/h_alpha(H_C(y,gamma),alpha)+dgamma2_h_C(y,gamma)/h_C(y,gamma))
+  
+  sd1<-sum(d1)
+  
+  sd2<-sum(d2)
+  
+  sd3<-sum(d3)
+  
+  sd4<-sum(d4)
+  
+  c(sd1,sd2,sd3,sd4) # vector of dimension 4
+}
+```
+
+```{r}
+#custom Gompertz
+Hgompt<-function(x,var1,var2){
+  exp((var1*x)^var2)-1
+}
+
+hgompt<-function(x,var1,var2){
+  var1*var2*((var1*x)^(var2-1))*exp((var1*x)^var2)
+}
+
+custom.gompt <- list(name = "gompt",  pars = c("var1", "var2"),
+                     location = "var1", transforms = c(log, log),
+                     inv.transforms = c(exp, exp), inits = function(t) c(0.1,0.1))
+```
+
+
+```{r}
+# column names
+names <- list(NULL, c("convergence_a","convergence_b","alpha","theta1","theta2", "gamma1","gamma2",
+                      'ci_theta1_min','ci_theta1_max','ci_theta2_min','ci_theta2_max',
+                      'ci_gamma1_min','ci_gamma1_max','ci_gamma2_min','ci_gamma2_max'))
+```
+
+```{r}
+# Initial values
+# exp(-mu)
+
+```
+
+
+# Weibull H_alpha
+
+```{r}
+alpha <- seq(from=0.5, to=10, length.out = 50)
+```
+
+
+## Weibull(H_alpha) - Weibull(t) - Weibull(c)
+
+
+```{r}
+res_table1 <- data.frame(matrix(ncol=length(names[[2]]),nrow=50,
+                                  dimnames=names))
+
+
+  H_alpha<-function(u,alpha){u^alpha}
+  H_alpha_inv<-function(u,alpha){u^(1/alpha)}
+  h_alpha<-function(u,alpha){alpha*u^{alpha-1}}
+  log_h_alpha<-function(u,alpha){log(alpha)+(alpha-1)*log(u)}
+  dh_alpha<-function(u,alpha){alpha*u^{alpha-2}*(alpha-1)}
+  
+  #distribution of t
+  
+  H_T<-function(t,theta){ (t*theta[1])^theta[2]}
+  h_T <-function(t,theta){theta[2]*theta[1]^{theta[2]}*t^{theta[2]-1}}
+  log_h_T<-function(t,theta){log(theta[2]) + theta[2]*log(theta[1]) + (theta[2]-1)*log(t)}
+  dtheta1_H_T<-function(t,theta){theta[2]*t^{theta[2]}*theta[1]^{theta[2]-1}}
+  dtheta2_H_T<-function(t,theta){(t*theta[1])^{theta[2]}*log(t*theta[1])}
+  dtheta1_h_T<-function(t,theta){theta[2]^{2}*(theta[1]*t)^{theta[2]-1}}
+  dtheta2_h_T<-function(t,theta){theta[1]^{theta[2]}*t^{theta[2]-1}+theta[2]*theta[1]^{theta[2]}*t^{theta[2]-1}*(log(theta[1])+log(t))}
+  
+  fit_a<-survreg(Surv(times,event)~1,dist = 'weibull',data=data_optim)
+  theta1_a<-as.numeric(exp(-fit_a$coefficients)) # exp(-mu)
+  theta2_a<-1/fit_a$scale # 1/sigma 
+  
+  fit_b<-survreg(Surv(times,times/times)~1,dist = 'weibull',data=data_optim)
+  theta1_b<-as.numeric(exp(-fit_b$coefficients)) # exp(-mu)
+  theta2_b<-1/fit_b$scale # 1/sigma 
+  
+  
+  #distribution of c
+  
+  H_C<-function(c,gamma){ (c*gamma[1])^gamma[2]}
+  h_C <-function(c,gamma){gamma[2]*gamma[1]^{gamma[2]}*c^{gamma[2]-1}}
+  log_h_C<-function(c,gamma){log(gamma[2]) + gamma[2]*log(gamma[1]) + (gamma[2]-1)*log(c)}
+  dgamma1_H_C<-function(c,gamma){gamma[2]*c^{gamma[2]}*gamma[1]^{gamma[2]-1}}
+  dgamma2_H_C<-function(c,gamma){(c*gamma[1])^{gamma[2]}*log(c*gamma[1])}
+  dgamma1_h_C<-function(c,gamma){gamma[2]^{2}*(gamma[1]*c)^{gamma[2]-1}}
+  dgamma2_h_C<-function(c,gamma){gamma[1]^{gamma[2]}*c^{gamma[2]-1}+gamma[2]*gamma[1]^{gamma[2]}*c^{gamma[2]-1}*(log(gamma[1])+log(c))}
+  
+  
+  fit_a<-survreg(Surv(times,event)~1,dist = 'weibull',data=data_optim)
+  gamma1_a<-as.numeric(exp(-fit_a$coefficients)) # exp(-mu) 
+  gamma2_a<-1/fit_a$scale # 1/sigma 
+  
+  fit_b<-survreg(Surv(times,times/times)~1,dist = 'weibull',data=data_optim)
+  gamma1_b<-as.numeric(exp(-fit_b$coefficients)) # exp(-mu) 
+  gamma2_b<-1/fit_b$scale # 1/sigma 
+  
+  initials_a <- c(theta1_a,theta2_a,gamma1_a,gamma2_a)
+  initials_b <- c(theta1_b,theta2_b,gamma1_b,gamma2_b)
+  
+  
+  
+  for (i in 1:length(alpha)){
+      
+       opt_a<-optim(par=initials_a,
+                    fn=loglikelihood2,
+                    gr=grad,
+                    alpha=alpha[i],
+                    H_T=H_T,
+                    H_C=H_C,
+                    H_alpha=H_alpha,
+                    H_alpha_inv=H_alpha_inv,
+                    log_h_alpha=log_h_alpha,
+                    log_h_C=log_h_C,
+                    log_h_T=log_h_T,
+                    h_C=h_C,
+                    h_T=h_T,
+                    h_alpha=h_alpha,
+                    dh_alpha=dh_alpha,
+                    dtheta1_H_T=dtheta1_H_T,
+                    dtheta2_H_T=dtheta2_H_T,
+                    dtheta1_h_T=dtheta1_h_T,
+                    dtheta2_h_T=dtheta2_h_T,
+                    dgamma1_H_C=dgamma1_H_C,
+                    dgamma2_H_C=dgamma2_H_C,
+                    dgamma1_h_C=dgamma1_h_C,
+                    dgamma2_h_C=dgamma2_h_C,
+                    data=data_optim,
+                    method="BFGS",
+                    control=list(fnscale=-1),
+                    hessian=TRUE)
+           
+       opt_b<-optim(par=initials_b,
+                    fn=loglikelihood2,
+                    gr=grad,
+                    alpha=alpha[i],
+                    H_T=H_T,
+                    H_C=H_C,
+                    H_alpha=H_alpha,
+                    H_alpha_inv=H_alpha_inv,
+                    log_h_alpha=log_h_alpha,
+                    log_h_C=log_h_C,
+                    log_h_T=log_h_T,
+                    h_C=h_C,
+                    h_T=h_T,
+                    h_alpha=h_alpha,
+                    dh_alpha=dh_alpha,
+                    dtheta1_H_T=dtheta1_H_T,
+                    dtheta2_H_T=dtheta2_H_T,
+                    dtheta1_h_T=dtheta1_h_T,
+                    dtheta2_h_T=dtheta2_h_T,
+                    dgamma1_H_C=dgamma1_H_C,
+                    dgamma2_H_C=dgamma2_H_C,
+                    dgamma1_h_C=dgamma1_h_C,
+                    dgamma2_h_C=dgamma2_h_C,
+                    data=data_optim,
+                    method="BFGS",
+                    control=list(fnscale=-1),
+                    hessian=TRUE )
+       
+        m_c <- max(opt_a$par[1]-opt_b$par[1],opt_a$par[2]-opt_b$par[2],opt_a$par[3]-opt_b$par[3],opt_a$par[4]-opt_b$par[4])
+
+        
+          if(abs(m_c) < tol){ ## change
+            max <- opt_a$par
+            hess <- opt_a$hessian
+        }else{
+          if(opt_b$value > opt_a$value){
+            max <- opt_b$par
+            hess <- opt_b$hessian
+          }else{
+            max <- opt_a$par
+            hess <- opt_a$hessian
+          }}
+        
+        
+        nas <- sum(is.na(hess))
+        inv_hess <- try(solve(-hess))
+        if((!is.na(nas)) & (class(inv_hess)!='try-error')){
+          se <- sqrt(diag(solve(-hess))) 
+        }else{
+          se <- rep(0,length(max))
+        }
+        
+        res_table1$convergence_a[i] <- opt_a$convergence
+        res_table1$convergence_b[i] <- opt_b$convergence
+        res_table1$alpha[i] <- alpha[i] 
+        res_table1$theta1[i] <- max[1]
+        res_table1$theta2[i] <- max[2]
+        res_table1$gamma1[i] <- max[3]
+        res_table1$gamma2[i] <- max[4]
+        res_table1$ci_theta1_min[i] <- max[1]-1.96*se[1]
+        res_table1$ci_theta1_max[i] <- max[1]+1.96*se[1]
+        res_table1$ci_theta2_min[i] <- max[2]-1.96*se[2]
+        res_table1$ci_theta2_max[i] <- max[2]+1.96*se[2]
+        res_table1$ci_gamma1_min[i] <- max[3]-1.96*se[3]
+        res_table1$ci_gamma1_max[i] <- max[3]+1.96*se[3]
+        res_table1$ci_gamma2_min[i] <- max[4]-1.96*se[4]
+        res_table1$ci_gamma2_max[i] <- max[4]+1.96*se[4]
+      }     
+
+```
+
+
+
+
+## Weibull(H_alpha) - Weibull(t)- Gompertz(c)
+
+```{r w-w-g}
+ res_table2 <- data.frame(matrix(ncol=length(names[[2]]),nrow=50,
+                                  dimnames=names))
+
+
+  H_alpha<-function(u,alpha){u^alpha}
+  H_alpha_inv<-function(u,alpha){u^(1/alpha)}
+  h_alpha<-function(u,alpha){alpha*u^{alpha-1}}
+  log_h_alpha<-function(u,alpha){log(alpha)+(alpha-1)*log(u)}
+  dh_alpha<-function(u,alpha){alpha*u^{alpha-2}*(alpha-1)}
+  
+  #distribution of t
+  
+  H_T<-function(t,theta){ (t*theta[1])^theta[2]}
+  h_T <-function(t,theta){theta[2]*theta[1]^{theta[2]}*t^{theta[2]-1}}
+  log_h_T<-function(t,theta){log(theta[2]) + theta[2]*log(theta[1]) + (theta[2]-1)*log(t)}
+  dtheta1_H_T<-function(t,theta){theta[2]*t^{theta[2]}*theta[1]^{theta[2]-1}}
+  dtheta2_H_T<-function(t,theta){(t*theta[1])^{theta[2]}*log(t*theta[1])}
+  dtheta1_h_T<-function(t,theta){theta[2]^{2}*(theta[1]*t)^{theta[2]-1}}
+  dtheta2_h_T<-function(t,theta){theta[1]^{theta[2]}*t^{theta[2]-1}+theta[2]*theta[1]^{theta[2]}*t^{theta[2]-1}*(log(theta[1])+log(t))}
+  
+  fit_a<-survreg(Surv(times,event)~1,dist = 'weibull',data=data_optim)
+  theta1_a<-as.numeric(exp(-fit_a$coefficients)) # exp(-mu)
+  theta2_a<-1/fit_a$scale # 1/sigma 
+  
+  fit_b<-survreg(Surv(times,times/times)~1,dist = 'weibull',data=data_optim)
+  theta1_b<-as.numeric(exp(-fit_b$coefficients)) # exp(-mu)
+  theta2_b<-1/fit_b$scale # 1/sigma 
+  
+  H_C<-function(c,gamma){ exp((c*gamma[1])^gamma[2])-1}
+  h_C<-function(c,gamma){gamma[2]*gamma[1]^{gamma[2]}* exp((c*gamma[1])^gamma[2])*c^{gamma[2]-1}}
+  log_h_C<-function(c,gamma){log(gamma[2]) + gamma[2]*log(gamma[1]) + (c*gamma[1])^gamma[2] + (gamma[2]-1)*log(c)}
+  dgamma1_H_C<-function(c,gamma){gamma[2]*exp((c*gamma[1])^gamma[2])*c^{gamma[2]}*gamma[1]^{gamma[2]-1}}
+  dgamma2_H_C<-function(c,gamma){exp((c*gamma[1])^gamma[2])*log(c*gamma[1])*(c*gamma[1])^{gamma[2]}}
+  dgamma1_h_C<-function(c,gamma){gamma[2]^{2}*c^{gamma[2]-1}*exp((c*gamma[1])^gamma[2])*(c^{gamma[2]}*gamma[1]^{2*gamma[2]-1}+gamma[1]^{gamma[2]-1})}
+  dgamma2_h_C<-function(c,gamma){exp((c*gamma[1])^gamma[2])*c^{gamma[2]-1}*gamma[1]^{gamma[2]}+gamma[2]*(
+      exp((c*gamma[1])^gamma[2])*gamma[1]^{gamma[2]}*c^{gamma[2]-1}*log(gamma[1])+gamma[1]^{gamma[2]}*(exp((c*gamma[1])^gamma[2])*gamma[1]^{gamma[2]}*c^{2*gamma[2]-1}*log(c*gamma[1])+exp((c*gamma[1])^gamma[2])*c^{gamma[2]-1}*log(c)))}
+  
+  fit_a<-flexsurvreg(Surv(times,event)~1,dist = custom.gompt,data=data_optim)
+  gamma1_a<-exp(fit_a$coefficients[1]) # exp(coeff[1])
+  gamma2_a<-exp(fit_a$coefficients[2]) # exp(coeff[2])
+  
+  fit_b<-flexsurvreg(Surv(times,times/times)~1,dist = custom.gompt,data=data_optim)
+  gamma1_b<-exp(fit_b$coefficients[1]) # exp(coeff[1]) 
+  gamma2_b<-exp(fit_b$coefficients[2]) # exp(coeff[2])
+  
+  initials_a <- c(theta1_a,theta2_a,gamma1_a,gamma2_a)
+  initials_b <- c(theta1_b,theta2_b,gamma1_b,gamma2_b)
+  
+  for (i in 1:length(alpha)){
+        
+
+       opt_a<-optim(par=initials_a,
+                        fn=loglikelihood2,
+                        gr=grad,
+                        alpha=alpha[i],
+                        H_T=H_T,
+                        H_C=H_C,
+                        H_alpha=H_alpha,
+                        H_alpha_inv=H_alpha_inv,
+                        log_h_alpha=log_h_alpha,
+                        log_h_C=log_h_C,
+                        log_h_T=log_h_T,
+                        h_C=h_C,
+                        h_T=h_T,
+                        h_alpha=h_alpha,
+                        dh_alpha=dh_alpha,
+                        dtheta1_H_T=dtheta1_H_T,
+                        dtheta2_H_T=dtheta2_H_T,
+                        dtheta1_h_T=dtheta1_h_T,
+                        dtheta2_h_T=dtheta2_h_T,
+                        dgamma1_H_C=dgamma1_H_C,
+                        dgamma2_H_C=dgamma2_H_C,
+                        dgamma1_h_C=dgamma1_h_C,
+                        dgamma2_h_C=dgamma2_h_C,
+                        data=data_optim,
+                        method="BFGS",
+                        control=list(fnscale=-1),
+                        hessian=TRUE)
+           
+       opt_b<-optim(par=initials_b,
+                        fn=loglikelihood2,
+                        gr=grad,
+                        alpha=alpha[i],
+                        H_T=H_T,
+                        H_C=H_C,
+                        H_alpha=H_alpha,
+                        H_alpha_inv=H_alpha_inv,
+                        log_h_alpha=log_h_alpha,
+                        log_h_C=log_h_C,
+                        log_h_T=log_h_T,
+                        h_C=h_C,
+                        h_T=h_T,
+                        h_alpha=h_alpha,
+                        dh_alpha=dh_alpha,
+                        dtheta1_H_T=dtheta1_H_T,
+                        dtheta2_H_T=dtheta2_H_T,
+                        dtheta1_h_T=dtheta1_h_T,
+                        dtheta2_h_T=dtheta2_h_T,
+                        dgamma1_H_C=dgamma1_H_C,
+                        dgamma2_H_C=dgamma2_H_C,
+                        dgamma1_h_C=dgamma1_h_C,
+                        dgamma2_h_C=dgamma2_h_C,
+                        data=data_optim,
+                        method="BFGS",
+                        control=list(fnscale=-1),
+                        hessian=TRUE )
+
+         
+        m_c <- max(opt_a$par[1]-opt_b$par[1],opt_a$par[2]-opt_b$par[2],opt_a$par[3]-opt_b$par[3],opt_a$par[4]-opt_b$par[4])
+        
+          if(abs(m_c) < tol){ 
+            max <- opt_a$par
+            hess <- opt_a$hessian
+        }else{
+          if(opt_b$value > opt_a$value){
+            max <- opt_b$par
+            hess <- opt_b$hessian
+          }else{
+            max <- opt_a$par
+            hess <- opt_a$hessian
+          }}
+
+        se <- sqrt(diag(solve(-hess))) 
+        
+        res_table2$convergence_a[i] <- opt_a$convergence
+        res_table2$convergence_b[i] <- opt_b$convergence
+        res_table2$alpha[i] <- alpha[i] 
+        res_table2$theta1[i] <- max[1]
+        res_table2$theta2[i] <- max[2]
+        res_table2$gamma1[i] <- max[3]
+        res_table2$gamma2[i] <- max[4]
+        res_table2$ci_theta1_min[i] <- max[1]-1.96*se[1]
+        res_table2$ci_theta1_max[i] <- max[1]+1.96*se[1]
+        res_table2$ci_theta2_min[i] <- max[2]-1.96*se[2]
+        res_table2$ci_theta2_max[i] <- max[2]+1.96*se[2]
+        res_table2$ci_gamma1_min[i] <- max[3]-1.96*se[3]
+        res_table2$ci_gamma1_max[i] <- max[3]+1.96*se[3]
+        res_table2$ci_gamma2_min[i] <- max[4]-1.96*se[4]
+        res_table2$ci_gamma2_max[i] <- max[4]+1.96*se[4]
+  }
+
+```
+
+
+
+## Weibull(H_alpha) - Weibull(t) - Loglogistic(c)
+
+```{r w-w-l}
+ res_table3 <- data.frame(matrix(ncol=length(names[[2]]),nrow=50,
+                                  dimnames=names))
+
+
+  H_alpha<-function(u,alpha){u^alpha}
+  H_alpha_inv<-function(u,alpha){u^(1/alpha)}
+  h_alpha<-function(u,alpha){alpha*u^{alpha-1}}
+  log_h_alpha<-function(u,alpha){log(alpha)+(alpha-1)*log(u)}
+  dh_alpha<-function(u,alpha){alpha*u^{alpha-2}*(alpha-1)}
+  
+  #distribution of t
+  
+  H_T<-function(t,theta){ (t*theta[1])^theta[2]}
+  h_T <-function(t,theta){theta[2]*theta[1]^{theta[2]}*t^{theta[2]-1}}
+  log_h_T<-function(t,theta){log(theta[2]) + theta[2]*log(theta[1]) + (theta[2]-1)*log(t)}
+  dtheta1_H_T<-function(t,theta){theta[2]*t^{theta[2]}*theta[1]^{theta[2]-1}}
+  dtheta2_H_T<-function(t,theta){(t*theta[1])^{theta[2]}*log(t*theta[1])}
+  dtheta1_h_T<-function(t,theta){theta[2]^{2}*(theta[1]*t)^{theta[2]-1}}
+  dtheta2_h_T<-function(t,theta){theta[1]^{theta[2]}*t^{theta[2]-1}+theta[2]*theta[1]^{theta[2]}*t^{theta[2]-1}*(log(theta[1])+log(t))}
+  
+  fit_a<-survreg(Surv(times,event)~1,dist = 'weibull',data=data_optim)
+  theta1_a<-as.numeric(exp(-fit_a$coefficients)) # exp(-mu)
+  theta2_a<-1/fit_a$scale # 1/sigma 
+  
+  fit_b<-survreg(Surv(times,times/times)~1,dist = 'weibull',data=data_optim)
+  theta1_b<-as.numeric(exp(-fit_b$coefficients)) # exp(-mu)
+  theta2_b<-1/fit_b$scale # 1/sigma 
+  
+  #distribution of c
+        
+  H_C<-function(c,gamma){ log(1+(c*gamma[1])^{gamma[2]})}
+  h_C<-function(c,gamma){(gamma[2]*gamma[1]^{gamma[2]}*c^{gamma[2]-1})/(1+(c*gamma[1])^{gamma[2]})}
+  log_h_C<-function(c,gamma){log(gamma[2]) + gamma[2]*log(gamma[1]) + (gamma[2]-1)*log(c)-log(1+(c*gamma[1])^{gamma[2]})}
+  dgamma1_H_C<-function(c,gamma){(gamma[2]*c^{gamma[2]}*gamma[1]^{gamma[2]-1})/(1+(c*gamma[1])^{gamma[2]})}
+  dgamma2_H_C<-function(c,gamma){(log(c*gamma[1])*(c*gamma[1])^{gamma[2]})/(1+(c*gamma[1])^{gamma[2]})}
+  dgamma1_h_C<-function(c,gamma){(gamma[2]^{2}*gamma[1]^{gamma[2]-1}*c^{gamma[2]-1})/((1+(c*gamma[1])^{gamma[2]})^{2})}
+  dgamma2_h_C<-function(c,gamma){(gamma[1]^{gamma[2]}*c^{gamma[2]-1}*(1+(gamma[1]*c)^{gamma[2]}+gamma[2]*log(c*gamma[1])))/((1+(c*gamma[1])^{gamma[2]})^{2})}
+  
+  fit_a<-survreg(Surv(times,event)~1,dist = 'loglogistic',data=data_optim)
+  gamma1_a<-exp(-fit_a$coefficients) 
+  gamma2_a<-1/fit_a$scale # 1/sigma 
+  
+  fit_b<-survreg(Surv(times,times/times)~1,dist = 'loglogistic',data=data_optim)
+  gamma1_b<-exp(-fit_b$coefficients) 
+  gamma2_b<-1/fit_b$scale # 1/sigma     
+  
+  
+  initials_a <- c(theta1_a,theta2_a,gamma1_a,gamma2_a)
+  initials_b <- c(theta1_b,theta2_b,gamma1_b,gamma2_b)
+  
+
+  
+  for (i in 1:length(alpha)){
+      
+       opt_a<-optim(par=initials_a,
+                    fn=loglikelihood2,
+                    gr=grad,
+                    alpha=alpha[i],
+                    H_T=H_T,
+                    H_C=H_C,
+                    H_alpha=H_alpha,
+                    H_alpha_inv=H_alpha_inv,
+                    log_h_alpha=log_h_alpha,
+                    log_h_C=log_h_C,
+                    log_h_T=log_h_T,
+                    h_C=h_C,
+                    h_T=h_T,
+                    h_alpha=h_alpha,
+                    dh_alpha=dh_alpha,
+                    dtheta1_H_T=dtheta1_H_T,
+                    dtheta2_H_T=dtheta2_H_T,
+                    dtheta1_h_T=dtheta1_h_T,
+                    dtheta2_h_T=dtheta2_h_T,
+                    dgamma1_H_C=dgamma1_H_C,
+                    dgamma2_H_C=dgamma2_H_C,
+                    dgamma1_h_C=dgamma1_h_C,
+                    dgamma2_h_C=dgamma2_h_C,
+                    data=data_optim,
+                    method="BFGS",
+                    control=list(fnscale=-1, trace=5),
+                    hessian=TRUE)
+           
+       opt_b<-optim(par=initials_b,
+                    fn=loglikelihood2,
+                    gr=grad,
+                    alpha=alpha[i],
+                    H_T=H_T,
+                    H_C=H_C,
+                    H_alpha=H_alpha,
+                    H_alpha_inv=H_alpha_inv,
+                    log_h_alpha=log_h_alpha,
+                    log_h_C=log_h_C,
+                    log_h_T=log_h_T,
+                    h_C=h_C,
+                    h_T=h_T,
+                    h_alpha=h_alpha,
+                    dh_alpha=dh_alpha,
+                    dtheta1_H_T=dtheta1_H_T,
+                    dtheta2_H_T=dtheta2_H_T,
+                    dtheta1_h_T=dtheta1_h_T,
+                    dtheta2_h_T=dtheta2_h_T,
+                    dgamma1_H_C=dgamma1_H_C,
+                    dgamma2_H_C=dgamma2_H_C,
+                    dgamma1_h_C=dgamma1_h_C,
+                    dgamma2_h_C=dgamma2_h_C,
+                    data=data_optim,
+                    method="BFGS",
+                    control=list(fnscale=-1),
+                    hessian=TRUE )
+       
+        m_c <- max(opt_a$par[1]-opt_b$par[1],opt_a$par[2]-opt_b$par[2],opt_a$par[3]-opt_b$par[3],opt_a$par[4]-opt_b$par[4])
+
+        
+          if(abs(m_c) < tol){ ## change
+            max <- opt_a$par
+            hess <- opt_a$hessian
+        }else{
+          if(opt_b$value > opt_a$value){
+            max <- opt_b$par
+            hess <- opt_b$hessian
+          }else{
+            max <- opt_a$par
+            hess <- opt_a$hessian
+          }}
+        
+        nas <- sum(is.na(hess))
+        inv_hess <- try(solve(-hess))
+        if((!is.na(nas)) & (class(inv_hess)!='try-error')){
+          se <- sqrt(diag(solve(-hess))) 
+        }else{
+          se <- rep(0,length(max))
+        }
+        
+        res_table3$convergence_a[i] <- opt_a$convergence
+        res_table3$convergence_b[i] <- opt_b$convergence
+        res_table3$alpha[i] <- alpha[i] 
+        res_table3$theta1[i] <- max[1]
+        res_table3$theta2[i] <- max[2]
+        res_table3$gamma1[i] <- max[3]
+        res_table3$gamma2[i] <- max[4]
+        res_table3$ci_theta1_min[i] <- max[1]-1.96*se[1]
+        res_table3$ci_theta1_max[i] <- max[1]+1.96*se[1]
+        res_table3$ci_theta2_min[i] <- max[2]-1.96*se[2]
+        res_table3$ci_theta2_max[i] <- max[2]+1.96*se[2]
+        res_table3$ci_gamma1_min[i] <- max[3]-1.96*se[3]
+        res_table3$ci_gamma1_max[i] <- max[3]+1.96*se[3]
+        res_table3$ci_gamma2_min[i] <- max[4]-1.96*se[4]
+        res_table3$ci_gamma2_max[i] <- max[4]+1.96*se[4]
+  }
+
+```
+
+
+
+## Weibull(H_alpha) - Gompertz(t) - Gompertz(C)
+
+```{r w-g-g}
+ res_table4 <- data.frame(matrix(ncol=length(names[[2]]),nrow=50,
+                                  dimnames=names))
+
+
+  H_alpha<-function(u,alpha){u^alpha}
+  H_alpha_inv<-function(u,alpha){u^(1/alpha)}
+  h_alpha<-function(u,alpha){alpha*u^{alpha-1}}
+  log_h_alpha<-function(u,alpha){log(alpha)+(alpha-1)*log(u)}
+  dh_alpha<-function(u,alpha){alpha*u^{alpha-2}*(alpha-1)}
+  
+  #distribution of t
+  
+  H_T<-function(t,theta){ exp((t*theta[1])^theta[2])-1}
+  h_T<-function(t,theta){theta[2]*theta[1]^{theta[2]}* exp((t*theta[1])^theta[2])*t^{theta[2]-1}}
+  log_h_T<-function(t,theta){log(theta[2]) + theta[2]*log(theta[1]) + (t*theta[1])^theta[2] + (theta[2]-1)*log(t)}
+  dtheta1_H_T<-function(t,theta){theta[2]*exp((t*theta[1])^theta[2])*t^{theta[2]}*theta[1]^{theta[2]-1}}
+  dtheta2_H_T<-function(t,theta){exp((t*theta[1])^theta[2])*log(t*theta[1])*(t*theta[1])^{theta[2]}}
+  dtheta1_h_T<-function(t,theta){theta[2]^{2}*t^{theta[2]-1}*exp((t*theta[1])^theta[2])*(t^{theta[2]}*theta[1]^{2*theta[2]-1}+theta[1]^{theta[2]-1})}
+  dtheta2_h_T<-function(t,theta){exp((t*theta[1])^theta[2])*t^{theta[2]-1}*theta[1]^{theta[2]}+theta[2]*(
+      exp((t*theta[1])^theta[2])*theta[1]^{theta[2]}*t^{theta[2]-1}*log(theta[1])+theta[1]^{theta[2]}*(exp((t*theta[1])^theta[2])*theta[1]^{theta[2]}*t^{2*theta[2]-1}*log(t*theta[1])+exp((t*theta[1])^theta[2])*t^{theta[2]-1}*log(t)))}
+  
+  fit_a<-flexsurvreg(Surv(times,event)~1,dist = custom.gompt,data=data_optim)
+  theta1_a<-exp(fit_a$coefficients[1]) # exp(coeff[1])
+  theta2_a<-exp(fit_a$coefficients[2]) # exp(coeff[2])
+  
+  fit_b<-flexsurvreg(Surv(times,times/times)~1,dist = custom.gompt,data=data_optim)
+  theta1_b<-exp(fit_b$coefficients[1]) # exp(coeff[1])
+  theta2_b<-exp(fit_b$coefficients[2]) # exp(coeff[2])
+  
+  H_C<-function(c,gamma){ exp((c*gamma[1])^gamma[2])-1}
+  h_C<-function(c,gamma){gamma[2]*gamma[1]^{gamma[2]}* exp((c*gamma[1])^gamma[2])*c^{gamma[2]-1}}
+  log_h_C<-function(c,gamma){log(gamma[2]) + gamma[2]*log(gamma[1]) + (c*gamma[1])^gamma[2] + (gamma[2]-1)*log(c)}
+  dgamma1_H_C<-function(c,gamma){gamma[2]*exp((c*gamma[1])^gamma[2])*c^{gamma[2]}*gamma[1]^{gamma[2]-1}}
+  dgamma2_H_C<-function(c,gamma){exp((c*gamma[1])^gamma[2])*log(c*gamma[1])*(c*gamma[1])^{gamma[2]}}
+  dgamma1_h_C<-function(c,gamma){gamma[2]^{2}*c^{gamma[2]-1}*exp((c*gamma[1])^gamma[2])*(c^{gamma[2]}*gamma[1]^{2*gamma[2]-1}+gamma[1]^{gamma[2]-1})}
+  dgamma2_h_C<-function(c,gamma){exp((c*gamma[1])^gamma[2])*c^{gamma[2]-1}*gamma[1]^{gamma[2]}+gamma[2]*(
+      exp((c*gamma[1])^gamma[2])*gamma[1]^{gamma[2]}*c^{gamma[2]-1}*log(gamma[1])+gamma[1]^{gamma[2]}*(exp((c*gamma[1])^gamma[2])*gamma[1]^{gamma[2]}*c^{2*gamma[2]-1}*log(c*gamma[1])+exp((c*gamma[1])^gamma[2])*c^{gamma[2]-1}*log(c)))}
+  
+  fit_a<-flexsurvreg(Surv(times,event)~1,dist = custom.gompt,data=data_optim)
+  gamma1_a<-exp(fit_a$coefficients[1]) # exp(coeff[1])
+  gamma2_a<-exp(fit_a$coefficients[2]) # exp(coeff[2])
+  
+  fit_b<-flexsurvreg(Surv(times,times/times)~1,dist = custom.gompt,data=data_optim)
+  gamma1_b<-exp(fit_b$coefficients[1]) # exp(coeff[1]) 
+  gamma2_b<-exp(fit_b$coefficients[2]) # exp(coeff[2])
+  
+  initials_a <- c(theta1_a,theta2_a,gamma1_a,gamma2_a)
+  initials_b <- c(theta1_b,theta2_b,gamma1_b,gamma2_b)
+  
+  for (i in 1:length(alpha)){
+        
+
+       opt_a<-optim(par=initials_a,
+                        fn=loglikelihood2,
+                        gr=grad,
+                        alpha=alpha[i],
+                        H_T=H_T,
+                        H_C=H_C,
+                        H_alpha=H_alpha,
+                        H_alpha_inv=H_alpha_inv,
+                        log_h_alpha=log_h_alpha,
+                        log_h_C=log_h_C,
+                        log_h_T=log_h_T,
+                        h_C=h_C,
+                        h_T=h_T,
+                        h_alpha=h_alpha,
+                        dh_alpha=dh_alpha,
+                        dtheta1_H_T=dtheta1_H_T,
+                        dtheta2_H_T=dtheta2_H_T,
+                        dtheta1_h_T=dtheta1_h_T,
+                        dtheta2_h_T=dtheta2_h_T,
+                        dgamma1_H_C=dgamma1_H_C,
+                        dgamma2_H_C=dgamma2_H_C,
+                        dgamma1_h_C=dgamma1_h_C,
+                        dgamma2_h_C=dgamma2_h_C,
+                        data=data_optim,
+                        method="BFGS",
+                        control=list(fnscale=-1),
+                        hessian=TRUE)
+           
+       opt_b<-optim(par=initials_b,
+                        fn=loglikelihood2,
+                        gr=grad,
+                        alpha=alpha[i],
+                        H_T=H_T,
+                        H_C=H_C,
+                        H_alpha=H_alpha,
+                        H_alpha_inv=H_alpha_inv,
+                        log_h_alpha=log_h_alpha,
+                        log_h_C=log_h_C,
+                        log_h_T=log_h_T,
+                        h_C=h_C,
+                        h_T=h_T,
+                        h_alpha=h_alpha,
+                        dh_alpha=dh_alpha,
+                        dtheta1_H_T=dtheta1_H_T,
+                        dtheta2_H_T=dtheta2_H_T,
+                        dtheta1_h_T=dtheta1_h_T,
+                        dtheta2_h_T=dtheta2_h_T,
+                        dgamma1_H_C=dgamma1_H_C,
+                        dgamma2_H_C=dgamma2_H_C,
+                        dgamma1_h_C=dgamma1_h_C,
+                        dgamma2_h_C=dgamma2_h_C,
+                        data=data_optim,
+                        method="BFGS",
+                        control=list(fnscale=-1),
+                        hessian=TRUE )
+
+         
+        m_c <- max(opt_a$par[1]-opt_b$par[1],opt_a$par[2]-opt_b$par[2],opt_a$par[3]-opt_b$par[3],opt_a$par[4]-opt_b$par[4])
+        
+          if(abs(m_c) < tol){
+            max <- opt_a$par
+            hess <- opt_a$hessian
+        }else{
+          if(opt_b$value > opt_a$value){
+            max <- opt_b$par
+            hess <- opt_b$hessian
+          }else{
+            max <- opt_a$par
+            hess <- opt_a$hessian
+          }}
+
+        nas <- sum(is.na(hess))
+        inv_hess <- try(solve(-hess))
+        if((!is.na(nas)) & (class(inv_hess)!='try-error')){
+          se <- sqrt(diag(solve(-hess))) 
+        }else{
+          se <- rep(0,length(max))
+        }
+        
+        res_table4$convergence_a[i] <- opt_a$convergence
+        res_table4$convergence_b[i] <- opt_b$convergence
+        res_table4$alpha[i] <- alpha[i] 
+        res_table4$theta1[i] <- max[1]
+        res_table4$theta2[i] <- max[2]
+        res_table4$gamma1[i] <- max[3]
+        res_table4$gamma2[i] <- max[4]
+        res_table4$ci_theta1_min[i] <- max[1]-1.96*se[1]
+        res_table4$ci_theta1_max[i] <- max[1]+1.96*se[1]
+        res_table4$ci_theta2_min[i] <- max[2]-1.96*se[2]
+        res_table4$ci_theta2_max[i] <- max[2]+1.96*se[2]
+        res_table4$ci_gamma1_min[i] <- max[3]-1.96*se[3]
+        res_table4$ci_gamma1_max[i] <- max[3]+1.96*se[3]
+        res_table4$ci_gamma2_min[i] <- max[4]-1.96*se[4]
+        res_table4$ci_gamma2_max[i] <- max[4]+1.96*se[4]
+  }
+
+```
+
+
+
+## Weibull(H_alpha) - Gompertz(t) - Loglogistic(C)
+
+```{r w-g-l}
+ alpha <- seq(from=0.5, to=10, length.out = 50)
+ res_table5 <- data.frame(matrix(ncol=length(names[[2]]),nrow=50,
+                                  dimnames=names))
+
+
+  H_alpha<-function(u,alpha){u^alpha}
+  H_alpha_inv<-function(u,alpha){u^(1/alpha)}
+  h_alpha<-function(u,alpha){alpha*u^{alpha-1}}
+  log_h_alpha<-function(u,alpha){log(alpha)+(alpha-1)*log(u)}
+  dh_alpha<-function(u,alpha){alpha*u^{alpha-2}*(alpha-1)}
+  
+  #distribution of t
+  
+  H_T<-function(t,theta){ exp((t*theta[1])^theta[2])-1}
+  h_T<-function(t,theta){theta[2]*theta[1]^{theta[2]}* exp((t*theta[1])^theta[2])*t^{theta[2]-1}}
+  log_h_T<-function(t,theta){log(theta[2]) + theta[2]*log(theta[1]) + (t*theta[1])^theta[2] + (theta[2]-1)*log(t)}
+  dtheta1_H_T<-function(t,theta){theta[2]*exp((t*theta[1])^theta[2])*t^{theta[2]}*theta[1]^{theta[2]-1}}
+  dtheta2_H_T<-function(t,theta){exp((t*theta[1])^theta[2])*log(t*theta[1])*(t*theta[1])^{theta[2]}}
+  dtheta1_h_T<-function(t,theta){theta[2]^{2}*t^{theta[2]-1}*exp((t*theta[1])^theta[2])*(t^{theta[2]}*theta[1]^{2*theta[2]-1}+theta[1]^{theta[2]-1})}
+  dtheta2_h_T<-function(t,theta){exp((t*theta[1])^theta[2])*t^{theta[2]-1}*theta[1]^{theta[2]}+theta[2]*(
+      exp((t*theta[1])^theta[2])*theta[1]^{theta[2]}*t^{theta[2]-1}*log(theta[1])+theta[1]^{theta[2]}*(exp((t*theta[1])^theta[2])*theta[1]^{theta[2]}*t^{2*theta[2]-1}*log(t*theta[1])+exp((t*theta[1])^theta[2])*t^{theta[2]-1}*log(t)))}
+  
+  fit_a<-flexsurvreg(Surv(times,event)~1,dist = custom.gompt,data=data_optim)
+  theta1_a<-exp(fit_a$coefficients[1]) # exp(coeff[1])
+  theta2_a<-exp(fit_a$coefficients[2]) # exp(coeff[2])
+  
+  fit_b<-flexsurvreg(Surv(times,times/times)~1,dist = custom.gompt,data=data_optim)
+  theta1_b<-exp(fit_b$coefficients[1]) # exp(coeff[1])
+  theta2_b<-exp(fit_b$coefficients[2]) # exp(coeff[2])
+  
+  #distribution of c
+        
+  H_C<-function(c,gamma){ log(1+(c*gamma[1])^{gamma[2]})}
+  h_C<-function(c,gamma){(gamma[2]*gamma[1]^{gamma[2]}*c^{gamma[2]-1})/(1+(c*gamma[1])^{gamma[2]})}
+  log_h_C<-function(c,gamma){log(gamma[2]) + gamma[2]*log(gamma[1]) + (gamma[2]-1)*log(c)-log(1+(c*gamma[1])^{gamma[2]})}
+  dgamma1_H_C<-function(c,gamma){(gamma[2]*c^{gamma[2]}*gamma[1]^{gamma[2]-1})/(1+(c*gamma[1])^{gamma[2]})}
+  dgamma2_H_C<-function(c,gamma){(log(c*gamma[1])*(c*gamma[1])^{gamma[2]})/(1+(c*gamma[1])^{gamma[2]})}
+  dgamma1_h_C<-function(c,gamma){(gamma[2]^{2}*gamma[1]^{gamma[2]-1}*c^{gamma[2]-1})/((1+(c*gamma[1])^{gamma[2]})^{2})}
+  dgamma2_h_C<-function(c,gamma){(gamma[1]^{gamma[2]}*c^{gamma[2]-1}*(1+(gamma[1]*c)^{gamma[2]}+gamma[2]*log(c*gamma[1])))/((1+(c*gamma[1])^{gamma[2]})^{2})}
+  
+  fit_a<-survreg(Surv(times,event)~1,dist = 'loglogistic',data=data_optim)
+  gamma1_a<-exp(-fit_a$coefficients)
+  gamma2_a<-1/fit_a$scale # 1/sigma 
+  
+  fit_b<-survreg(Surv(times,times/times)~1,dist = 'loglogistic',data=data_optim)
+  gamma1_b<-exp(-fit_b$coefficients)
+  gamma2_b<-1/fit_b$scale # 1/sigma    
+  
+  initials_a <- c(theta1_a,theta2_a,gamma1_a,gamma2_a)
+  initials_b <- c(theta1_b,theta2_b,gamma1_b,gamma2_b)
+  
+  for (i in 1:length(alpha)){
+        
+
+       opt_a<-optim(par=initials_a,
+                        fn=loglikelihood2,
+                        gr=grad,
+                        alpha=alpha[i],
+                        H_T=H_T,
+                        H_C=H_C,
+                        H_alpha=H_alpha,
+                        H_alpha_inv=H_alpha_inv,
+                        log_h_alpha=log_h_alpha,
+                        log_h_C=log_h_C,
+                        log_h_T=log_h_T,
+                        h_C=h_C,
+                        h_T=h_T,
+                        h_alpha=h_alpha,
+                        dh_alpha=dh_alpha,
+                        dtheta1_H_T=dtheta1_H_T,
+                        dtheta2_H_T=dtheta2_H_T,
+                        dtheta1_h_T=dtheta1_h_T,
+                        dtheta2_h_T=dtheta2_h_T,
+                        dgamma1_H_C=dgamma1_H_C,
+                        dgamma2_H_C=dgamma2_H_C,
+                        dgamma1_h_C=dgamma1_h_C,
+                        dgamma2_h_C=dgamma2_h_C,
+                        data=data_optim,
+                        method="BFGS",
+                        control=list(fnscale=-1),
+                        hessian=TRUE)
+           
+       opt_b<-optim(par=initials_b,
+                        fn=loglikelihood2,
+                        gr=grad,
+                        alpha=alpha[i],
+                        H_T=H_T,
+                        H_C=H_C,
+                        H_alpha=H_alpha,
+                        H_alpha_inv=H_alpha_inv,
+                        log_h_alpha=log_h_alpha,
+                        log_h_C=log_h_C,
+                        log_h_T=log_h_T,
+                        h_C=h_C,
+                        h_T=h_T,
+                        h_alpha=h_alpha,
+                        dh_alpha=dh_alpha,
+                        dtheta1_H_T=dtheta1_H_T,
+                        dtheta2_H_T=dtheta2_H_T,
+                        dtheta1_h_T=dtheta1_h_T,
+                        dtheta2_h_T=dtheta2_h_T,
+                        dgamma1_H_C=dgamma1_H_C,
+                        dgamma2_H_C=dgamma2_H_C,
+                        dgamma1_h_C=dgamma1_h_C,
+                        dgamma2_h_C=dgamma2_h_C,
+                        data=data_optim,
+                        method="BFGS",
+                        control=list(fnscale=-1),
+                        hessian=TRUE )
+
+         
+        m_c <- max(opt_a$par[1]-opt_b$par[1],opt_a$par[2]-opt_b$par[2],opt_a$par[3]-opt_b$par[3],opt_a$par[4]-opt_b$par[4])
+        
+          if(abs(m_c) < tol){
+            max <- opt_a$par
+            hess <- opt_a$hessian
+        }else{
+          if(opt_b$value > opt_a$value){
+            max <- opt_b$par
+            hess <- opt_b$hessian
+          }else{
+            max <- opt_a$par
+            hess <- opt_a$hessian
+          }}
+
+        nas <- sum(is.na(hess))
+        inv_hess <- try(solve(-hess))
+        if((!is.na(nas)) & (class(inv_hess)!='try-error')){
+          se <- sqrt(diag(solve(-hess))) 
+        }else{
+          se <- rep(0,length(max))
+        }
+        
+        res_table5$convergence_a[i] <- opt_a$convergence
+        res_table5$convergence_b[i] <- opt_b$convergence
+        res_table5$alpha[i] <- alpha[i] 
+        res_table5$theta1[i] <- max[1]
+        res_table5$theta2[i] <- max[2]
+        res_table5$gamma1[i] <- max[3]
+        res_table5$gamma2[i] <- max[4]
+        res_table5$ci_theta1_min[i] <- max[1]-1.96*se[1]
+        res_table5$ci_theta1_max[i] <- max[1]+1.96*se[1]
+        res_table5$ci_theta2_min[i] <- max[2]-1.96*se[2]
+        res_table5$ci_theta2_max[i] <- max[2]+1.96*se[2]
+        res_table5$ci_gamma1_min[i] <- max[3]-1.96*se[3]
+        res_table5$ci_gamma1_max[i] <- max[3]+1.96*se[3]
+        res_table5$ci_gamma2_min[i] <- max[4]-1.96*se[4]
+        res_table5$ci_gamma2_max[i] <- max[4]+1.96*se[4]
+  }
+
+```
+
+
+
+## Weibull(H_alpha) - Gompertz(t) - Weibull(C)
+
+```{r w-g-w}
+ res_table6 <- data.frame(matrix(ncol=length(names[[2]]),nrow=50,
+                                  dimnames=names))
+
+
+  H_alpha<-function(u,alpha){u^alpha}
+  H_alpha_inv<-function(u,alpha){u^(1/alpha)}
+  h_alpha<-function(u,alpha){alpha*u^{alpha-1}}
+  log_h_alpha<-function(u,alpha){log(alpha)+(alpha-1)*log(u)}
+  dh_alpha<-function(u,alpha){alpha*u^{alpha-2}*(alpha-1)}
+  
+  #distribution of t
+  
+  H_T<-function(t,theta){ exp((t*theta[1])^theta[2])-1}
+  h_T<-function(t,theta){theta[2]*theta[1]^{theta[2]}* exp((t*theta[1])^theta[2])*t^{theta[2]-1}}
+  log_h_T<-function(t,theta){log(theta[2]) + theta[2]*log(theta[1]) + (t*theta[1])^theta[2] + (theta[2]-1)*log(t)}
+  dtheta1_H_T<-function(t,theta){theta[2]*exp((t*theta[1])^theta[2])*t^{theta[2]}*theta[1]^{theta[2]-1}}
+  dtheta2_H_T<-function(t,theta){exp((t*theta[1])^theta[2])*log(t*theta[1])*(t*theta[1])^{theta[2]}}
+  dtheta1_h_T<-function(t,theta){theta[2]^{2}*t^{theta[2]-1}*exp((t*theta[1])^theta[2])*(t^{theta[2]}*theta[1]^{2*theta[2]-1}+theta[1]^{theta[2]-1})}
+  dtheta2_h_T<-function(t,theta){exp((t*theta[1])^theta[2])*t^{theta[2]-1}*theta[1]^{theta[2]}+theta[2]*(
+      exp((t*theta[1])^theta[2])*theta[1]^{theta[2]}*t^{theta[2]-1}*log(theta[1])+theta[1]^{theta[2]}*(exp((t*theta[1])^theta[2])*theta[1]^{theta[2]}*t^{2*theta[2]-1}*log(t*theta[1])+exp((t*theta[1])^theta[2])*t^{theta[2]-1}*log(t)))}
+  
+  fit_a<-flexsurvreg(Surv(times,event)~1,dist = custom.gompt,data=data_optim)
+  theta1_a<-exp(fit_a$coefficients[1]) # exp(coeff[1])
+  theta2_a<-exp(fit_a$coefficients[2]) # exp(coeff[2])
+  
+  fit_b<-flexsurvreg(Surv(times,times/times)~1,dist = custom.gompt,data=data_optim)
+  theta1_b<-exp(fit_b$coefficients[1]) # exp(coeff[1])
+  theta2_b<-exp(fit_b$coefficients[2]) # exp(coeff[2])
+  
+  H_C<-function(c,gamma){ (c*gamma[1])^gamma[2]}
+  h_C <-function(c,gamma){gamma[2]*gamma[1]^{gamma[2]}*c^{gamma[2]-1}}
+  log_h_C<-function(c,gamma){log(gamma[2]) + gamma[2]*log(gamma[1]) + (gamma[2]-1)*log(c)}
+  dgamma1_H_C<-function(c,gamma){gamma[2]*c^{gamma[2]}*gamma[1]^{gamma[2]-1}}
+  dgamma2_H_C<-function(c,gamma){(c*gamma[1])^{gamma[2]}*log(c*gamma[1])}
+  dgamma1_h_C<-function(c,gamma){gamma[2]^{2}*(gamma[1]*c)^{gamma[2]-1}}
+  dgamma2_h_C<-function(c,gamma){gamma[1]^{gamma[2]}*c^{gamma[2]-1}+gamma[2]*gamma[1]^{gamma[2]}*c^{gamma[2]-1}*(log(gamma[1])+log(c))}
+  
+  
+  fit_a<-survreg(Surv(times,event)~1,dist = 'weibull',data=data_optim)
+  gamma1_a<-as.numeric(exp(-fit_a$coefficients)) # exp(-mu)
+  gamma2_a<-1/fit_a$scale # 1/sigma 
+  
+  fit_b<-survreg(Surv(times,times/times)~1,dist = 'weibull',data=data_optim)
+  gamma1_b<-as.numeric(exp(-fit_b$coefficients)) # exp(-mu)
+  gamma2_b<-1/fit_b$scale # 1/sigma 
+  
+  initials_a <- c(theta1_a,theta2_a,gamma1_a,gamma2_a)
+  initials_b <- c(theta1_b,theta2_b,gamma1_b,gamma2_b)
+  
+  for (i in 1:length(alpha)){
+        
+
+       opt_a<-optim(par=initials_a,
+                        fn=loglikelihood2,
+                        gr=grad,
+                        alpha=alpha[i],
+                        H_T=H_T,
+                        H_C=H_C,
+                        H_alpha=H_alpha,
+                        H_alpha_inv=H_alpha_inv,
+                        log_h_alpha=log_h_alpha,
+                        log_h_C=log_h_C,
+                        log_h_T=log_h_T,
+                        h_C=h_C,
+                        h_T=h_T,
+                        h_alpha=h_alpha,
+                        dh_alpha=dh_alpha,
+                        dtheta1_H_T=dtheta1_H_T,
+                        dtheta2_H_T=dtheta2_H_T,
+                        dtheta1_h_T=dtheta1_h_T,
+                        dtheta2_h_T=dtheta2_h_T,
+                        dgamma1_H_C=dgamma1_H_C,
+                        dgamma2_H_C=dgamma2_H_C,
+                        dgamma1_h_C=dgamma1_h_C,
+                        dgamma2_h_C=dgamma2_h_C,
+                        data=data_optim,
+                        method="BFGS",
+                        control=list(fnscale=-1),
+                        hessian=TRUE)
+           
+       opt_b<-optim(par=initials_b,
+                        fn=loglikelihood2,
+                        gr=grad,
+                        alpha=alpha[i],
+                        H_T=H_T,
+                        H_C=H_C,
+                        H_alpha=H_alpha,
+                        H_alpha_inv=H_alpha_inv,
+                        log_h_alpha=log_h_alpha,
+                        log_h_C=log_h_C,
+                        log_h_T=log_h_T,
+                        h_C=h_C,
+                        h_T=h_T,
+                        h_alpha=h_alpha,
+                        dh_alpha=dh_alpha,
+                        dtheta1_H_T=dtheta1_H_T,
+                        dtheta2_H_T=dtheta2_H_T,
+                        dtheta1_h_T=dtheta1_h_T,
+                        dtheta2_h_T=dtheta2_h_T,
+                        dgamma1_H_C=dgamma1_H_C,
+                        dgamma2_H_C=dgamma2_H_C,
+                        dgamma1_h_C=dgamma1_h_C,
+                        dgamma2_h_C=dgamma2_h_C,
+                        data=data_optim,
+                        method="BFGS",
+                        control=list(fnscale=-1),
+                        hessian=TRUE )
+
+         
+        m_c <- max(opt_a$par[1]-opt_b$par[1],opt_a$par[2]-opt_b$par[2],opt_a$par[3]-opt_b$par[3],opt_a$par[4]-opt_b$par[4])
+        
+          if(abs(m_c) < tol){
+            max <- opt_a$par
+            hess <- opt_a$hessian
+        }else{
+          if(opt_b$value > opt_a$value){
+            max <- opt_b$par
+            hess <- opt_b$hessian
+          }else{
+            max <- opt_a$par
+            hess <- opt_a$hessian
+          }}
+
+        nas <- sum(is.na(hess))
+        inv_hess <- try(solve(-hess))
+        if((!is.na(nas)) & (class(inv_hess)!='try-error')){
+          se <- sqrt(diag(solve(-hess))) 
+        }else{
+          se <- rep(0,length(max))
+        }
+        
+        res_table6$convergence_a[i] <- opt_a$convergence
+        res_table6$convergence_b[i] <- opt_b$convergence
+        res_table6$alpha[i] <- alpha[i] 
+        res_table6$theta1[i] <- max[1]
+        res_table6$theta2[i] <- max[2]
+        res_table6$gamma1[i] <- max[3]
+        res_table6$gamma2[i] <- max[4]
+        res_table6$ci_theta1_min[i] <- max[1]-1.96*se[1]
+        res_table6$ci_theta1_max[i] <- max[1]+1.96*se[1]
+        res_table6$ci_theta2_min[i] <- max[2]-1.96*se[2]
+        res_table6$ci_theta2_max[i] <- max[2]+1.96*se[2]
+        res_table6$ci_gamma1_min[i] <- max[3]-1.96*se[3]
+        res_table6$ci_gamma1_max[i] <- max[3]+1.96*se[3]
+        res_table6$ci_gamma2_min[i] <- max[4]-1.96*se[4]
+        res_table6$ci_gamma2_max[i] <- max[4]+1.96*se[4]
+  }
+
+```
+
+
+
+
+## Weibull(H_alpha) - Loglogistic(t) - Weibull(C)
+
+```{r w-l-w}
+ alpha <- seq(from=0.5, to=10, length.out = 50)
+ res_table7 <- data.frame(matrix(ncol=length(names[[2]]),nrow=50,
+                                  dimnames=names))
+
+
+  H_alpha<-function(u,alpha){u^alpha}
+  H_alpha_inv<-function(u,alpha){u^(1/alpha)}
+  h_alpha<-function(u,alpha){alpha*u^{alpha-1}}
+  log_h_alpha<-function(u,alpha){log(alpha)+(alpha-1)*log(u)}
+  dh_alpha<-function(u,alpha){alpha*u^{alpha-2}*(alpha-1)}
+  
+  #distribution of t
+  
+  H_T<-function(t,theta){ log(1+(t*theta[1])^{theta[2]})}
+  h_T<-function(t,theta){(theta[2]*theta[1]^{theta[2]}*t^{theta[2]-1})/(1+(t*theta[1])^{theta[2]})}
+  log_h_T<-function(t,theta){log(theta[2]) + theta[2]*log(theta[1]) + (theta[2]-1)*log(t)-log(1+(t*theta[1])^{theta[2]})}
+  dtheta1_H_T<-function(t,theta){(theta[2]*t^{theta[2]}*theta[1]^{theta[2]-1})/(1+(t*theta[1])^{theta[2]})}
+  dtheta2_H_T<-function(t,theta){(log(t*theta[1])*(t*theta[1])^{theta[2]})/(1+(t*theta[1])^{theta[2]})}
+  dtheta1_h_T<-function(t,theta){(theta[2]^{2}*theta[1]^{theta[2]-1}*t^{theta[2]-1})/((1+(t*theta[1])^{theta[2]})^{2})}
+  dtheta2_h_T<-function(t,theta){(theta[1]^{theta[2]}*t^{theta[2]-1}*(1+(theta[1]*t)^{theta[2]}+theta[2]*log(t*theta[1])))/((1+(t*theta[1])^{theta[2]})^{2})}
+  
+  fit_a<-survreg(Surv(times,event)~1,dist = 'loglogistic',data=data_optim)
+  theta1_a<-as.numeric(exp(-fit_a$coefficients)) # exp(-mu)
+  theta2_a<-1/fit_a$scale # 1/sigma 
+  
+  fit_b<-survreg(Surv(times,times/times)~1,dist = 'loglogistic',data=data_optim)
+  theta1_b<-as.numeric(exp(-fit_b$coefficients)) # exp(-mu)
+  theta2_b<-1/fit_b$scale # 1/sigma 
+  
+  
+  H_C<-function(c,gamma){ (c*gamma[1])^gamma[2]}
+  h_C <-function(c,gamma){gamma[2]*gamma[1]^{gamma[2]}*c^{gamma[2]-1}}
+  log_h_C<-function(c,gamma){log(gamma[2]) + gamma[2]*log(gamma[1]) + (gamma[2]-1)*log(c)}
+  dgamma1_H_C<-function(c,gamma){gamma[2]*c^{gamma[2]}*gamma[1]^{gamma[2]-1}}
+  dgamma2_H_C<-function(c,gamma){(c*gamma[1])^{gamma[2]}*log(c*gamma[1])}
+  dgamma1_h_C<-function(c,gamma){gamma[2]^{2}*(gamma[1]*c)^{gamma[2]-1}}
+  dgamma2_h_C<-function(c,gamma){gamma[1]^{gamma[2]}*c^{gamma[2]-1}+gamma[2]*gamma[1]^{gamma[2]}*c^{gamma[2]-1}*(log(gamma[1])+log(c))}
+  
+  
+  fit_a<-survreg(Surv(times,event)~1,dist = 'weibull',data=data_optim)
+  gamma1_a<-as.numeric(exp(-fit_a$coefficients)) # exp(-mu)
+  gamma2_a<-1/fit_a$scale # 1/sigma 
+  
+  fit_b<-survreg(Surv(times,times/times)~1,dist = 'weibull',data=data_optim)
+  gamma1_b<-as.numeric(exp(-fit_b$coefficients)) # exp(-mu)
+  gamma2_b<-1/fit_b$scale # 1/sigma 
+  
+  initials_a <- c(theta1_a,theta2_a,gamma1_a,gamma2_a)
+  initials_b <- c(theta1_b,theta2_b,gamma1_b,gamma2_b)
+  
+  for (i in 1:length(alpha)){
+        
+
+       opt_a<-optim(par=initials_a,
+                        fn=loglikelihood2,
+                        gr=grad,
+                        alpha=alpha[i],
+                        H_T=H_T,
+                        H_C=H_C,
+                        H_alpha=H_alpha,
+                        H_alpha_inv=H_alpha_inv,
+                        log_h_alpha=log_h_alpha,
+                        log_h_C=log_h_C,
+                        log_h_T=log_h_T,
+                        h_C=h_C,
+                        h_T=h_T,
+                        h_alpha=h_alpha,
+                        dh_alpha=dh_alpha,
+                        dtheta1_H_T=dtheta1_H_T,
+                        dtheta2_H_T=dtheta2_H_T,
+                        dtheta1_h_T=dtheta1_h_T,
+                        dtheta2_h_T=dtheta2_h_T,
+                        dgamma1_H_C=dgamma1_H_C,
+                        dgamma2_H_C=dgamma2_H_C,
+                        dgamma1_h_C=dgamma1_h_C,
+                        dgamma2_h_C=dgamma2_h_C,
+                        data=data_optim,
+                        method="BFGS",
+                        control=list(fnscale=-1),
+                        hessian=TRUE)
+           
+       opt_b<-optim(par=initials_b,
+                        fn=loglikelihood2,
+                        gr=grad,
+                        alpha=alpha[i],
+                        H_T=H_T,
+                        H_C=H_C,
+                        H_alpha=H_alpha,
+                        H_alpha_inv=H_alpha_inv,
+                        log_h_alpha=log_h_alpha,
+                        log_h_C=log_h_C,
+                        log_h_T=log_h_T,
+                        h_C=h_C,
+                        h_T=h_T,
+                        h_alpha=h_alpha,
+                        dh_alpha=dh_alpha,
+                        dtheta1_H_T=dtheta1_H_T,
+                        dtheta2_H_T=dtheta2_H_T,
+                        dtheta1_h_T=dtheta1_h_T,
+                        dtheta2_h_T=dtheta2_h_T,
+                        dgamma1_H_C=dgamma1_H_C,
+                        dgamma2_H_C=dgamma2_H_C,
+                        dgamma1_h_C=dgamma1_h_C,
+                        dgamma2_h_C=dgamma2_h_C,
+                        data=data_optim,
+                        method="BFGS",
+                        control=list(fnscale=-1),
+                        hessian=TRUE )
+
+         
+        m_c <- max(opt_a$par[1]-opt_b$par[1],opt_a$par[2]-opt_b$par[2],opt_a$par[3]-opt_b$par[3],opt_a$par[4]-opt_b$par[4])
+        
+          if(abs(m_c) < tol){
+            max <- opt_a$par
+            hess <- opt_a$hessian
+        }else{
+          if(opt_b$value > opt_a$value){
+            max <- opt_b$par
+            hess <- opt_b$hessian
+          }else{
+            max <- opt_a$par
+            hess <- opt_a$hessian
+          }}
+
+        nas <- sum(is.na(hess))
+        inv_hess <- try(solve(-hess))
+        if((!is.na(nas)) & (class(inv_hess)!='try-error')){
+          se <- sqrt(diag(solve(-hess))) 
+        }else{
+          se <- rep(0,length(max))
+        }
+        
+        res_table7$convergence_a[i] <- opt_a$convergence
+        res_table7$convergence_b[i] <- opt_b$convergence
+        res_table7$alpha[i] <- alpha[i] 
+        res_table7$theta1[i] <- max[1]
+        res_table7$theta2[i] <- max[2]
+        res_table7$gamma1[i] <- max[3]
+        res_table7$gamma2[i] <- max[4]
+        res_table7$ci_theta1_min[i] <- max[1]-1.96*se[1]
+        res_table7$ci_theta1_max[i] <- max[1]+1.96*se[1]
+        res_table7$ci_theta2_min[i] <- max[2]-1.96*se[2]
+        res_table7$ci_theta2_max[i] <- max[2]+1.96*se[2]
+        res_table7$ci_gamma1_min[i] <- max[3]-1.96*se[3]
+        res_table7$ci_gamma1_max[i] <- max[3]+1.96*se[3]
+        res_table7$ci_gamma2_min[i] <- max[4]-1.96*se[4]
+        res_table7$ci_gamma2_max[i] <- max[4]+1.96*se[4]
+  }
+
+```
+
+
+## Weibull(H_alpha) - Loglogistic(t) - Gompertz(C)
+
+```{r w-l-g}
+ alpha <- seq(from=0.5, to=10, length.out = 50)
+ res_table8 <- data.frame(matrix(ncol=length(names[[2]]),nrow=50,
+                                  dimnames=names))
+
+
+  H_alpha<-function(u,alpha){u^alpha}
+  H_alpha_inv<-function(u,alpha){u^(1/alpha)}
+  h_alpha<-function(u,alpha){alpha*u^{alpha-1}}
+  log_h_alpha<-function(u,alpha){log(alpha)+(alpha-1)*log(u)}
+  dh_alpha<-function(u,alpha){alpha*u^{alpha-2}*(alpha-1)}
+  
+  #distribution of t
+  
+  H_T<-function(t,theta){ log(1+(t*theta[1])^{theta[2]})}
+  h_T<-function(t,theta){(theta[2]*theta[1]^{theta[2]}*t^{theta[2]-1})/(1+(t*theta[1])^{theta[2]})}
+  log_h_T<-function(t,theta){log(theta[2]) + theta[2]*log(theta[1]) + (theta[2]-1)*log(t)-log(1+(t*theta[1])^{theta[2]})}
+  dtheta1_H_T<-function(t,theta){(theta[2]*t^{theta[2]}*theta[1]^{theta[2]-1})/(1+(t*theta[1])^{theta[2]})}
+  dtheta2_H_T<-function(t,theta){(log(t*theta[1])*(t*theta[1])^{theta[2]})/(1+(t*theta[1])^{theta[2]})}
+  dtheta1_h_T<-function(t,theta){(theta[2]^{2}*theta[1]^{theta[2]-1}*t^{theta[2]-1})/((1+(t*theta[1])^{theta[2]})^{2})}
+  dtheta2_h_T<-function(t,theta){(theta[1]^{theta[2]}*t^{theta[2]-1}*(1+(theta[1]*t)^{theta[2]}+theta[2]*log(t*theta[1])))/((1+(t*theta[1])^{theta[2]})^{2})}
+  
+  fit_a<-survreg(Surv(times,event)~1,dist = 'loglogistic',data=data_optim)
+  theta1_a<-as.numeric(exp(-fit_a$coefficients)) # exp(-mu)
+  theta2_a<-1/fit_a$scale # 1/sigma 
+  
+  fit_b<-survreg(Surv(times,times/times)~1,dist = 'loglogistic',data=data_optim)
+  theta1_b<-as.numeric(exp(-fit_b$coefficients)) # exp(-mu)
+  theta2_b<-1/fit_b$scale # 1/sigma 
+  
+  H_C<-function(c,gamma){ exp((c*gamma[1])^gamma[2])-1}
+  h_C<-function(c,gamma){gamma[2]*gamma[1]^{gamma[2]}* exp((c*gamma[1])^gamma[2])*c^{gamma[2]-1}}
+  log_h_C<-function(c,gamma){log(gamma[2]) + gamma[2]*log(gamma[1]) + (c*gamma[1])^gamma[2] + (gamma[2]-1)*log(c)}
+  dgamma1_H_C<-function(c,gamma){gamma[2]*exp((c*gamma[1])^gamma[2])*c^{gamma[2]}*gamma[1]^{gamma[2]-1}}
+  dgamma2_H_C<-function(c,gamma){exp((c*gamma[1])^gamma[2])*log(c*gamma[1])*(c*gamma[1])^{gamma[2]}}
+  dgamma1_h_C<-function(c,gamma){gamma[2]^{2}*c^{gamma[2]-1}*exp((c*gamma[1])^gamma[2])*(c^{gamma[2]}*gamma[1]^{2*gamma[2]-1}+gamma[1]^{gamma[2]-1})}
+  dgamma2_h_C<-function(c,gamma){exp((c*gamma[1])^gamma[2])*c^{gamma[2]-1}*gamma[1]^{gamma[2]}+gamma[2]*(
+      exp((c*gamma[1])^gamma[2])*gamma[1]^{gamma[2]}*c^{gamma[2]-1}*log(gamma[1])+gamma[1]^{gamma[2]}*(exp((c*gamma[1])^gamma[2])*gamma[1]^{gamma[2]}*c^{2*gamma[2]-1}*log(c*gamma[1])+exp((c*gamma[1])^gamma[2])*c^{gamma[2]-1}*log(c)))}
+  
+  fit_a<-flexsurvreg(Surv(times,event)~1,dist = custom.gompt,data=data_optim)
+  gamma1_a<-exp(fit_a$coefficients[1]) # exp(coeff[1])
+  gamma2_a<-exp(fit_a$coefficients[2]) # exp(coeff[2])
+  
+  fit_b<-flexsurvreg(Surv(times,times/times)~1,dist = custom.gompt,data=data_optim)
+  gamma1_b<-exp(fit_b$coefficients[1]) # exp(coeff[1]) 
+  gamma2_b<-exp(fit_b$coefficients[2]) # exp(coeff[2])
+  
+  initials_a <- c(theta1_a,theta2_a,gamma1_a,gamma2_a)
+  initials_b <- c(theta1_b,theta2_b,gamma1_b,gamma2_b)
+  
+  for (i in 1:length(alpha)){
+        
+
+       opt_a<-optim(par=initials_a,
+                        fn=loglikelihood2,
+                        gr=grad,
+                        alpha=alpha[i],
+                        H_T=H_T,
+                        H_C=H_C,
+                        H_alpha=H_alpha,
+                        H_alpha_inv=H_alpha_inv,
+                        log_h_alpha=log_h_alpha,
+                        log_h_C=log_h_C,
+                        log_h_T=log_h_T,
+                        h_C=h_C,
+                        h_T=h_T,
+                        h_alpha=h_alpha,
+                        dh_alpha=dh_alpha,
+                        dtheta1_H_T=dtheta1_H_T,
+                        dtheta2_H_T=dtheta2_H_T,
+                        dtheta1_h_T=dtheta1_h_T,
+                        dtheta2_h_T=dtheta2_h_T,
+                        dgamma1_H_C=dgamma1_H_C,
+                        dgamma2_H_C=dgamma2_H_C,
+                        dgamma1_h_C=dgamma1_h_C,
+                        dgamma2_h_C=dgamma2_h_C,
+                        data=data_optim,
+                        method="BFGS",
+                        control=list(fnscale=-1),
+                        hessian=TRUE)
+           
+       opt_b<-optim(par=initials_b,
+                        fn=loglikelihood2,
+                        gr=grad,
+                        alpha=alpha[i],
+                        H_T=H_T,
+                        H_C=H_C,
+                        H_alpha=H_alpha,
+                        H_alpha_inv=H_alpha_inv,
+                        log_h_alpha=log_h_alpha,
+                        log_h_C=log_h_C,
+                        log_h_T=log_h_T,
+                        h_C=h_C,
+                        h_T=h_T,
+                        h_alpha=h_alpha,
+                        dh_alpha=dh_alpha,
+                        dtheta1_H_T=dtheta1_H_T,
+                        dtheta2_H_T=dtheta2_H_T,
+                        dtheta1_h_T=dtheta1_h_T,
+                        dtheta2_h_T=dtheta2_h_T,
+                        dgamma1_H_C=dgamma1_H_C,
+                        dgamma2_H_C=dgamma2_H_C,
+                        dgamma1_h_C=dgamma1_h_C,
+                        dgamma2_h_C=dgamma2_h_C,
+                        data=data_optim,
+                        method="BFGS",
+                        control=list(fnscale=-1),
+                        hessian=TRUE )
+
+         
+        m_c <- max(opt_a$par[1]-opt_b$par[1],opt_a$par[2]-opt_b$par[2],opt_a$par[3]-opt_b$par[3],opt_a$par[4]-opt_b$par[4])
+        
+          if(abs(m_c) < tol){
+            max <- opt_a$par
+            hess <- opt_a$hessian
+        }else{
+          if(opt_b$value > opt_a$value){
+            max <- opt_b$par
+            hess <- opt_b$hessian
+          }else{
+            max <- opt_a$par
+            hess <- opt_a$hessian
+          }}
+
+        nas <- sum(is.na(hess))
+        inv_hess <- try(solve(-hess))
+        if((!is.na(nas)) & (class(inv_hess)!='try-error')){
+          se <- sqrt(diag(solve(-hess))) 
+        }else{
+          se <- rep(0,length(max))
+        }
+        
+        res_table8$convergence_a[i] <- opt_a$convergence
+        res_table8$convergence_b[i] <- opt_b$convergence
+        res_table8$alpha[i] <- alpha[i] 
+        res_table8$theta1[i] <- max[1]
+        res_table8$theta2[i] <- max[2]
+        res_table8$gamma1[i] <- max[3]
+        res_table8$gamma2[i] <- max[4]
+        res_table8$ci_theta1_min[i] <- max[1]-1.96*se[1]
+        res_table8$ci_theta1_max[i] <- max[1]+1.96*se[1]
+        res_table8$ci_theta2_min[i] <- max[2]-1.96*se[2]
+        res_table8$ci_theta2_max[i] <- max[2]+1.96*se[2]
+        res_table8$ci_gamma1_min[i] <- max[3]-1.96*se[3]
+        res_table8$ci_gamma1_max[i] <- max[3]+1.96*se[3]
+        res_table8$ci_gamma2_min[i] <- max[4]-1.96*se[4]
+        res_table8$ci_gamma2_max[i] <- max[4]+1.96*se[4]
+  }
+
+```
+
+
+
+
+## Weibull(H_alpha) - Loglogistic(t) - Loglogistic(C)
+
+```{r w-l-l}
+ alpha <- seq(from=0.5, to=10, length.out = 50)
+ res_table9 <- data.frame(matrix(ncol=length(names[[2]]),nrow=50,
+                                  dimnames=names))
+
+
+  H_alpha<-function(u,alpha){u^alpha}
+  H_alpha_inv<-function(u,alpha){u^(1/alpha)}
+  h_alpha<-function(u,alpha){alpha*u^{alpha-1}}
+  log_h_alpha<-function(u,alpha){log(alpha)+(alpha-1)*log(u)}
+  dh_alpha<-function(u,alpha){alpha*u^{alpha-2}*(alpha-1)}
+  
+  #distribution of t
+  
+  H_T<-function(t,theta){ log(1+(t*theta[1])^{theta[2]})}
+  h_T<-function(t,theta){(theta[2]*theta[1]^{theta[2]}*t^{theta[2]-1})/(1+(t*theta[1])^{theta[2]})}
+  log_h_T<-function(t,theta){log(theta[2]) + theta[2]*log(theta[1]) + (theta[2]-1)*log(t)-log(1+(t*theta[1])^{theta[2]})}
+  dtheta1_H_T<-function(t,theta){(theta[2]*t^{theta[2]}*theta[1]^{theta[2]-1})/(1+(t*theta[1])^{theta[2]})}
+  dtheta2_H_T<-function(t,theta){(log(t*theta[1])*(t*theta[1])^{theta[2]})/(1+(t*theta[1])^{theta[2]})}
+  dtheta1_h_T<-function(t,theta){(theta[2]^{2}*theta[1]^{theta[2]-1}*t^{theta[2]-1})/((1+(t*theta[1])^{theta[2]})^{2})}
+  dtheta2_h_T<-function(t,theta){(theta[1]^{theta[2]}*t^{theta[2]-1}*(1+(theta[1]*t)^{theta[2]}+theta[2]*log(t*theta[1])))/((1+(t*theta[1])^{theta[2]})^{2})}
+  
+  fit_a<-survreg(Surv(times,event)~1,dist = 'loglogistic',data=data_optim)
+  theta1_a<-as.numeric(exp(-fit_a$coefficients)) # exp(-mu)
+  theta2_a<-1/fit_a$scale # 1/sigma 
+  
+  fit_b<-survreg(Surv(times,times/times)~1,dist = 'loglogistic',data=data_optim)
+  theta1_b<-as.numeric(exp(-fit_b$coefficients)) # exp(-mu)
+  theta2_b<-1/fit_b$scale # 1/sigma 
+        
+        
+  #distribution of c
+        
+  H_C<-function(c,gamma){ log(1+(c*gamma[1])^{gamma[2]})}
+  h_C<-function(c,gamma){(gamma[2]*gamma[1]^{gamma[2]}*c^{gamma[2]-1})/(1+(c*gamma[1])^{gamma[2]})}
+  log_h_C<-function(c,gamma){log(gamma[2]) + gamma[2]*log(gamma[1]) + (gamma[2]-1)*log(c)-log(1+(c*gamma[1])^{gamma[2]})}
+  dgamma1_H_C<-function(c,gamma){(gamma[2]*c^{gamma[2]}*gamma[1]^{gamma[2]-1})/(1+(c*gamma[1])^{gamma[2]})}
+  dgamma2_H_C<-function(c,gamma){(log(c*gamma[1])*(c*gamma[1])^{gamma[2]})/(1+(c*gamma[1])^{gamma[2]})}
+  dgamma1_h_C<-function(c,gamma){(gamma[2]^{2}*gamma[1]^{gamma[2]-1}*c^{gamma[2]-1})/((1+(c*gamma[1])^{gamma[2]})^{2})}
+  dgamma2_h_C<-function(c,gamma){(gamma[1]^{gamma[2]}*c^{gamma[2]-1}*(1+(gamma[1]*c)^{gamma[2]}+gamma[2]*log(c*gamma[1])))/((1+(c*gamma[1])^{gamma[2]})^{2})}
+  
+  fit_a<-survreg(Surv(times,event)~1,dist = 'loglogistic',data=data_optim)
+  gamma1_a<-exp(-fit_a$coefficients)
+  gamma2_a<-1/fit_a$scale # 1/sigma 
+  
+  fit_b<-survreg(Surv(times,times/times)~1,dist = 'loglogistic',data=data_optim)
+  gamma1_b<-exp(-fit_b$coefficients)
+  gamma2_b<-1/fit_b$scale # 1/sigma   
+  
+  initials_a <- c(theta1_a,theta2_a,gamma1_a,gamma2_a)
+  initials_b <- c(theta1_b,theta2_b,gamma1_b,gamma2_b)
+  
+  for (i in 1:length(alpha)){
+        
+
+       opt_a<-optim(par=initials_a,
+                        fn=loglikelihood2,
+                        gr=grad,
+                        alpha=alpha[i],
+                        H_T=H_T,
+                        H_C=H_C,
+                        H_alpha=H_alpha,
+                        H_alpha_inv=H_alpha_inv,
+                        log_h_alpha=log_h_alpha,
+                        log_h_C=log_h_C,
+                        log_h_T=log_h_T,
+                        h_C=h_C,
+                        h_T=h_T,
+                        h_alpha=h_alpha,
+                        dh_alpha=dh_alpha,
+                        dtheta1_H_T=dtheta1_H_T,
+                        dtheta2_H_T=dtheta2_H_T,
+                        dtheta1_h_T=dtheta1_h_T,
+                        dtheta2_h_T=dtheta2_h_T,
+                        dgamma1_H_C=dgamma1_H_C,
+                        dgamma2_H_C=dgamma2_H_C,
+                        dgamma1_h_C=dgamma1_h_C,
+                        dgamma2_h_C=dgamma2_h_C,
+                        data=data_optim,
+                        method="BFGS",
+                        control=list(fnscale=-1),
+                        hessian=TRUE)
+           
+       opt_b<-optim(par=initials_b,
+                        fn=loglikelihood2,
+                        gr=grad,
+                        alpha=alpha[i],
+                        H_T=H_T,
+                        H_C=H_C,
+                        H_alpha=H_alpha,
+                        H_alpha_inv=H_alpha_inv,
+                        log_h_alpha=log_h_alpha,
+                        log_h_C=log_h_C,
+                        log_h_T=log_h_T,
+                        h_C=h_C,
+                        h_T=h_T,
+                        h_alpha=h_alpha,
+                        dh_alpha=dh_alpha,
+                        dtheta1_H_T=dtheta1_H_T,
+                        dtheta2_H_T=dtheta2_H_T,
+                        dtheta1_h_T=dtheta1_h_T,
+                        dtheta2_h_T=dtheta2_h_T,
+                        dgamma1_H_C=dgamma1_H_C,
+                        dgamma2_H_C=dgamma2_H_C,
+                        dgamma1_h_C=dgamma1_h_C,
+                        dgamma2_h_C=dgamma2_h_C,
+                        data=data_optim,
+                        method="BFGS",
+                        control=list(fnscale=-1),
+                        hessian=TRUE )
+
+         
+        m_c <- max(opt_a$par[1]-opt_b$par[1],opt_a$par[2]-opt_b$par[2],opt_a$par[3]-opt_b$par[3],opt_a$par[4]-opt_b$par[4])
+        
+          if(abs(m_c) < tol){
+            max <- opt_a$par
+            hess <- opt_a$hessian
+        }else{
+          if(opt_b$value > opt_a$value){
+            max <- opt_b$par
+            hess <- opt_b$hessian
+          }else{
+            max <- opt_a$par
+            hess <- opt_a$hessian
+          }}
+
+        nas <- sum(is.na(hess))
+        inv_hess <- try(solve(-hess))
+        if((!is.na(nas)) & (class(inv_hess)!='try-error')){
+          se <- sqrt(diag(solve(-hess))) 
+        }else{
+          se <- rep(0,length(max))
+        }
+        
+        res_table9$convergence_a[i] <- opt_a$convergence
+        res_table9$convergence_b[i] <- opt_b$convergence
+        res_table9$alpha[i] <- alpha[i] 
+        res_table9$theta1[i] <- max[1]
+        res_table9$theta2[i] <- max[2]
+        res_table9$gamma1[i] <- max[3]
+        res_table9$gamma2[i] <- max[4]
+        res_table9$ci_theta1_min[i] <- max[1]-1.96*se[1]
+        res_table9$ci_theta1_max[i] <- max[1]+1.96*se[1]
+        res_table9$ci_theta2_min[i] <- max[2]-1.96*se[2]
+        res_table9$ci_theta2_max[i] <- max[2]+1.96*se[2]
+        res_table9$ci_gamma1_min[i] <- max[3]-1.96*se[3]
+        res_table9$ci_gamma1_max[i] <- max[3]+1.96*se[3]
+        res_table9$ci_gamma2_min[i] <- max[4]-1.96*se[4]
+        res_table9$ci_gamma2_max[i] <- max[4]+1.96*se[4]
+  }
+
+```
+
+
+
+# Gompertz H_alpha
+
+```{r}
+alpha <- seq(from=0.05, to=10, length.out = 50)
+```
+
+
+## Gompertz(H_alpha) - Weibull(t) - Weibull (c)
+
+```{r g-w-w}
+res_table10 <- data.frame(matrix(ncol=length(names[[2]]),nrow=50,
+                                  dimnames=names))
+
+
+  H_alpha<-function(u,alpha){(exp(alpha*u) - 1)/alpha}
+  h_alpha<-function(u,alpha){exp(alpha*u)}
+  H_alpha_inv<-function(u,alpha){(1/alpha)*log(alpha*u+1)}
+  log_h_alpha<-function(u,alpha){alpha * u} 
+  dh_alpha<-function(u,alpha){alpha*exp(alpha*u)}
+  
+  #distribution of t
+  
+  H_T<-function(t,theta){ (t*theta[1])^theta[2]}
+  h_T <-function(t,theta){theta[2]*theta[1]^{theta[2]}*t^{theta[2]-1}}
+  log_h_T<-function(t,theta){log(theta[2]) + theta[2]*log(theta[1]) + (theta[2]-1)*log(t)}
+  dtheta1_H_T<-function(t,theta){theta[2]*t^{theta[2]}*theta[1]^{theta[2]-1}}
+  dtheta2_H_T<-function(t,theta){(t*theta[1])^{theta[2]}*log(t*theta[1])}
+  dtheta1_h_T<-function(t,theta){theta[2]^{2}*(theta[1]*t)^{theta[2]-1}}
+  dtheta2_h_T<-function(t,theta){theta[1]^{theta[2]}*t^{theta[2]-1}+theta[2]*theta[1]^{theta[2]}*t^{theta[2]-1}*(log(theta[1])+log(t))}
+  
+  fit_a<-survreg(Surv(times,event)~1,dist = 'weibull',data=data_optim)
+  theta1_a<-as.numeric(exp(-fit_a$coefficients)) # exp(-mu)
+  theta2_a<-1/fit_a$scale # 1/sigma 
+  
+  fit_b<-survreg(Surv(times,times/times)~1,dist = 'weibull',data=data_optim)
+  theta1_b<-as.numeric(exp(-fit_b$coefficients)) # exp(-mu)
+  theta2_b<-1/fit_b$scale # 1/sigma 
+  
+  
+  #distribution of c
+  
+  H_C<-function(c,gamma){ (c*gamma[1])^gamma[2]}
+  h_C <-function(c,gamma){gamma[2]*gamma[1]^{gamma[2]}*c^{gamma[2]-1}}
+  log_h_C<-function(c,gamma){log(gamma[2]) + gamma[2]*log(gamma[1]) + (gamma[2]-1)*log(c)}
+  dgamma1_H_C<-function(c,gamma){gamma[2]*c^{gamma[2]}*gamma[1]^{gamma[2]-1}}
+  dgamma2_H_C<-function(c,gamma){(c*gamma[1])^{gamma[2]}*log(c*gamma[1])}
+  dgamma1_h_C<-function(c,gamma){gamma[2]^{2}*(gamma[1]*c)^{gamma[2]-1}}
+  dgamma2_h_C<-function(c,gamma){gamma[1]^{gamma[2]}*c^{gamma[2]-1}+gamma[2]*gamma[1]^{gamma[2]}*c^{gamma[2]-1}*(log(gamma[1])+log(c))}
+  
+  
+  fit_a<-survreg(Surv(times,event)~1,dist = 'weibull',data=data_optim)
+  gamma1_a<-as.numeric(exp(-fit_a$coefficients)) # exp(-mu)
+  gamma2_a<-1/fit_a$scale # 1/sigma 
+  
+  fit_b<-survreg(Surv(times,times/times)~1,dist = 'weibull',data=data_optim)
+  gamma1_b<-as.numeric(exp(-fit_b$coefficients)) # exp(-mu)
+  gamma2_b<-1/fit_b$scale # 1/sigma 
+  
+  initials_a <- c(theta1_a,theta2_a,gamma1_a,gamma2_a)
+  initials_b <- c(theta1_b,theta2_b,gamma1_b,gamma2_b)
+  
+  
+  
+  for (i in 1:length(alpha)){
+      
+       opt_a<-optim(par=initials_a,
+                    fn=loglikelihood2,
+                    gr=grad,
+                    alpha=alpha[i],
+                    H_T=H_T,
+                    H_C=H_C,
+                    H_alpha=H_alpha,
+                    H_alpha_inv=H_alpha_inv,
+                    log_h_alpha=log_h_alpha,
+                    log_h_C=log_h_C,
+                    log_h_T=log_h_T,
+                    h_C=h_C,
+                    h_T=h_T,
+                    h_alpha=h_alpha,
+                    dh_alpha=dh_alpha,
+                    dtheta1_H_T=dtheta1_H_T,
+                    dtheta2_H_T=dtheta2_H_T,
+                    dtheta1_h_T=dtheta1_h_T,
+                    dtheta2_h_T=dtheta2_h_T,
+                    dgamma1_H_C=dgamma1_H_C,
+                    dgamma2_H_C=dgamma2_H_C,
+                    dgamma1_h_C=dgamma1_h_C,
+                    dgamma2_h_C=dgamma2_h_C,
+                    data=data_optim,
+                    method="BFGS",
+                    control=list(fnscale=-1),
+                    hessian=TRUE)
+           
+       opt_b<-optim(par=initials_b,
+                    fn=loglikelihood2,
+                    gr=grad,
+                    alpha=alpha[i],
+                    H_T=H_T,
+                    H_C=H_C,
+                    H_alpha=H_alpha,
+                    H_alpha_inv=H_alpha_inv,
+                    log_h_alpha=log_h_alpha,
+                    log_h_C=log_h_C,
+                    log_h_T=log_h_T,
+                    h_C=h_C,
+                    h_T=h_T,
+                    h_alpha=h_alpha,
+                    dh_alpha=dh_alpha,
+                    dtheta1_H_T=dtheta1_H_T,
+                    dtheta2_H_T=dtheta2_H_T,
+                    dtheta1_h_T=dtheta1_h_T,
+                    dtheta2_h_T=dtheta2_h_T,
+                    dgamma1_H_C=dgamma1_H_C,
+                    dgamma2_H_C=dgamma2_H_C,
+                    dgamma1_h_C=dgamma1_h_C,
+                    dgamma2_h_C=dgamma2_h_C,
+                    data=data_optim,
+                    method="BFGS",
+                    control=list(fnscale=-1),
+                    hessian=TRUE )
+       
+        m_c <- max(opt_a$par[1]-opt_b$par[1],opt_a$par[2]-opt_b$par[2],opt_a$par[3]-opt_b$par[3],opt_a$par[4]-opt_b$par[4])
+
+        
+          if(abs(m_c) < tol){ ## change
+            max <- opt_a$par
+            hess <- opt_a$hessian
+        }else{
+          if(opt_b$value > opt_a$value){
+            max <- opt_b$par
+            hess <- opt_b$hessian
+          }else{
+            max <- opt_a$par
+            hess <- opt_a$hessian
+          }}
+
+        nas <- sum(is.na(hess))
+        inv_hess <- try(solve(-hess))
+        if((!is.na(nas)) & (class(inv_hess)!='try-error')){
+          se <- sqrt(diag(solve(-hess))) 
+        }else{
+          se <- rep(0,length(max))
+        } 
+
+        res_table10$convergence_a[i] <- opt_a$convergence
+        res_table10$convergence_b[i] <- opt_b$convergence
+        res_table10$alpha[i] <- alpha[i] 
+        res_table10$theta1[i] <- max[1]
+        res_table10$theta2[i] <- max[2]
+        res_table10$gamma1[i] <- max[3]
+        res_table10$gamma2[i] <- max[4]
+        res_table10$ci_theta1_min[i] <- max[1]-1.96*se[1]
+        res_table10$ci_theta1_max[i] <- max[1]+1.96*se[1]
+        res_table10$ci_theta2_min[i] <- max[2]-1.96*se[2]
+        res_table10$ci_theta2_max[i] <- max[2]+1.96*se[2]
+        res_table10$ci_gamma1_min[i] <- max[3]-1.96*se[3]
+        res_table10$ci_gamma1_max[i] <- max[3]+1.96*se[3]
+        res_table10$ci_gamma2_min[i] <- max[4]-1.96*se[4]
+        res_table10$ci_gamma2_max[i] <- max[4]+1.96*se[4]
+      }     
+
+```
+
+
+
+## Gompertz(H_alpha) - Weibull(t) - Gompertz (c)
+
+```{r w-w-g}
+ res_table11 <- data.frame(matrix(ncol=length(names[[2]]),nrow=50,
+                                  dimnames=names))
+
+
+  H_alpha<-function(u,alpha){(exp(alpha*u) - 1)/alpha}
+  h_alpha<-function(u,alpha){exp(alpha*u)}
+  H_alpha_inv<-function(u,alpha){(1/alpha)*log(alpha*u+1)}
+  log_h_alpha<-function(u,alpha){alpha * u} 
+  dh_alpha<-function(u,alpha){alpha*exp(alpha*u)}
+  
+  #distribution of t
+  
+  H_T<-function(t,theta){ (t*theta[1])^theta[2]}
+  h_T <-function(t,theta){theta[2]*theta[1]^{theta[2]}*t^{theta[2]-1}}
+  log_h_T<-function(t,theta){log(theta[2]) + theta[2]*log(theta[1]) + (theta[2]-1)*log(t)}
+  dtheta1_H_T<-function(t,theta){theta[2]*t^{theta[2]}*theta[1]^{theta[2]-1}}
+  dtheta2_H_T<-function(t,theta){(t*theta[1])^{theta[2]}*log(t*theta[1])}
+  dtheta1_h_T<-function(t,theta){theta[2]^{2}*(theta[1]*t)^{theta[2]-1}}
+  dtheta2_h_T<-function(t,theta){theta[1]^{theta[2]}*t^{theta[2]-1}+theta[2]*theta[1]^{theta[2]}*t^{theta[2]-1}*(log(theta[1])+log(t))}
+  
+  fit_a<-survreg(Surv(times,event)~1,dist = 'weibull',data=data_optim)
+  theta1_a<-as.numeric(exp(-fit_a$coefficients)) # exp(-mu)
+  theta2_a<-1/fit_a$scale # 1/sigma 
+  
+  fit_b<-survreg(Surv(times,times/times)~1,dist = 'weibull',data=data_optim)
+  theta1_b<-as.numeric(exp(-fit_b$coefficients)) # exp(-mu)
+  theta2_b<-1/fit_b$scale # 1/sigma 
+  
+  H_C<-function(c,gamma){ exp((c*gamma[1])^gamma[2])-1}
+  h_C<-function(c,gamma){gamma[2]*gamma[1]^{gamma[2]}* exp((c*gamma[1])^gamma[2])*c^{gamma[2]-1}}
+  log_h_C<-function(c,gamma){log(gamma[2]) + gamma[2]*log(gamma[1]) + (c*gamma[1])^gamma[2] + (gamma[2]-1)*log(c)}
+  dgamma1_H_C<-function(c,gamma){gamma[2]*exp((c*gamma[1])^gamma[2])*c^{gamma[2]}*gamma[1]^{gamma[2]-1}}
+  dgamma2_H_C<-function(c,gamma){exp((c*gamma[1])^gamma[2])*log(c*gamma[1])*(c*gamma[1])^{gamma[2]}}
+  dgamma1_h_C<-function(c,gamma){gamma[2]^{2}*c^{gamma[2]-1}*exp((c*gamma[1])^gamma[2])*(c^{gamma[2]}*gamma[1]^{2*gamma[2]-1}+gamma[1]^{gamma[2]-1})}
+  dgamma2_h_C<-function(c,gamma){exp((c*gamma[1])^gamma[2])*c^{gamma[2]-1}*gamma[1]^{gamma[2]}+gamma[2]*(
+      exp((c*gamma[1])^gamma[2])*gamma[1]^{gamma[2]}*c^{gamma[2]-1}*log(gamma[1])+gamma[1]^{gamma[2]}*(exp((c*gamma[1])^gamma[2])*gamma[1]^{gamma[2]}*c^{2*gamma[2]-1}*log(c*gamma[1])+exp((c*gamma[1])^gamma[2])*c^{gamma[2]-1}*log(c)))}
+  
+  fit_a<-flexsurvreg(Surv(times,event)~1,dist = custom.gompt,data=data_optim)
+  gamma1_a<-exp(fit_a$coefficients[1]) # exp(coeff[1])
+  gamma2_a<-exp(fit_a$coefficients[2]) # exp(coeff[2])
+  
+  fit_b<-flexsurvreg(Surv(times,times/times)~1,dist = custom.gompt,data=data_optim)
+  gamma1_b<-exp(fit_b$coefficients[1]) # exp(coeff[1]) 
+  gamma2_b<-exp(fit_b$coefficients[2]) # exp(coeff[2])
+  
+  initials_a <- c(theta1_a,theta2_a,gamma1_a,gamma2_a)
+  initials_b <- c(theta1_b,theta2_b,gamma1_b,gamma2_b)
+  
+  for (i in 1:length(alpha)){
+        
+
+       opt_a<-optim(par=initials_a,
+                        fn=loglikelihood2,
+                        gr=grad,
+                        alpha=alpha[i],
+                        H_T=H_T,
+                        H_C=H_C,
+                        H_alpha=H_alpha,
+                        H_alpha_inv=H_alpha_inv,
+                        log_h_alpha=log_h_alpha,
+                        log_h_C=log_h_C,
+                        log_h_T=log_h_T,
+                        h_C=h_C,
+                        h_T=h_T,
+                        h_alpha=h_alpha,
+                        dh_alpha=dh_alpha,
+                        dtheta1_H_T=dtheta1_H_T,
+                        dtheta2_H_T=dtheta2_H_T,
+                        dtheta1_h_T=dtheta1_h_T,
+                        dtheta2_h_T=dtheta2_h_T,
+                        dgamma1_H_C=dgamma1_H_C,
+                        dgamma2_H_C=dgamma2_H_C,
+                        dgamma1_h_C=dgamma1_h_C,
+                        dgamma2_h_C=dgamma2_h_C,
+                        data=data_optim,
+                        method="BFGS",
+                        control=list(fnscale=-1),
+                        hessian=TRUE)
+           
+       opt_b<-optim(par=initials_b,
+                        fn=loglikelihood2,
+                        gr=grad,
+                        alpha=alpha[i],
+                        H_T=H_T,
+                        H_C=H_C,
+                        H_alpha=H_alpha,
+                        H_alpha_inv=H_alpha_inv,
+                        log_h_alpha=log_h_alpha,
+                        log_h_C=log_h_C,
+                        log_h_T=log_h_T,
+                        h_C=h_C,
+                        h_T=h_T,
+                        h_alpha=h_alpha,
+                        dh_alpha=dh_alpha,
+                        dtheta1_H_T=dtheta1_H_T,
+                        dtheta2_H_T=dtheta2_H_T,
+                        dtheta1_h_T=dtheta1_h_T,
+                        dtheta2_h_T=dtheta2_h_T,
+                        dgamma1_H_C=dgamma1_H_C,
+                        dgamma2_H_C=dgamma2_H_C,
+                        dgamma1_h_C=dgamma1_h_C,
+                        dgamma2_h_C=dgamma2_h_C,
+                        data=data_optim,
+                        method="BFGS",
+                        control=list(fnscale=-1),
+                        hessian=TRUE )
+
+         
+        m_c <- max(opt_a$par[1]-opt_b$par[1],opt_a$par[2]-opt_b$par[2],opt_a$par[3]-opt_b$par[3],opt_a$par[4]-opt_b$par[4])
+        
+          if(abs(m_c) < tol){ 
+            max <- opt_a$par
+            hess <- opt_a$hessian
+        }else{
+          if(opt_b$value > opt_a$value){
+            max <- opt_b$par
+            hess <- opt_b$hessian
+          }else{
+            max <- opt_a$par
+            hess <- opt_a$hessian
+          }}
+
+        nas <- sum(is.na(hess))
+        inv_hess <- try(solve(-hess))
+        if((!is.na(nas)) & (class(inv_hess)!='try-error')){
+          se <- sqrt(diag(solve(-hess))) 
+        }else{
+          se <- rep(0,length(max))
+        } 
+        
+        res_table11$convergence_a[i] <- opt_a$convergence
+        res_table11$convergence_b[i] <- opt_b$convergence
+        res_table11$alpha[i] <- alpha[i] 
+        res_table11$theta1[i] <- max[1]
+        res_table11$theta2[i] <- max[2]
+        res_table11$gamma1[i] <- max[3]
+        res_table11$gamma2[i] <- max[4]
+        res_table11$ci_theta1_min[i] <- max[1]-1.96*se[1]
+        res_table11$ci_theta1_max[i] <- max[1]+1.96*se[1]
+        res_table11$ci_theta2_min[i] <- max[2]-1.96*se[2]
+        res_table11$ci_theta2_max[i] <- max[2]+1.96*se[2]
+        res_table11$ci_gamma1_min[i] <- max[3]-1.96*se[3]
+        res_table11$ci_gamma1_max[i] <- max[3]+1.96*se[3]
+        res_table11$ci_gamma2_min[i] <- max[4]-1.96*se[4]
+        res_table11$ci_gamma2_max[i] <- max[4]+1.96*se[4]
+  }
+
+```
+
+## Gompertz(H_alpha) - Weibull(t) - Loglogistic(c)
+
+```{r w-w-l}
+ res_table12 <- data.frame(matrix(ncol=length(names[[2]]),nrow=50,
+                                  dimnames=names))
+
+
+  H_alpha<-function(u,alpha){(exp(alpha*u) - 1)/alpha}
+  h_alpha<-function(u,alpha){exp(alpha*u)}
+  H_alpha_inv<-function(u,alpha){(1/alpha)*log(alpha*u+1)}
+  log_h_alpha<-function(u,alpha){alpha * u} 
+  dh_alpha<-function(u,alpha){alpha*exp(alpha*u)}
+  
+  #distribution of t
+  
+  H_T<-function(t,theta){ (t*theta[1])^theta[2]}
+  h_T <-function(t,theta){theta[2]*theta[1]^{theta[2]}*t^{theta[2]-1}}
+  log_h_T<-function(t,theta){log(theta[2]) + theta[2]*log(theta[1]) + (theta[2]-1)*log(t)}
+  dtheta1_H_T<-function(t,theta){theta[2]*t^{theta[2]}*theta[1]^{theta[2]-1}}
+  dtheta2_H_T<-function(t,theta){(t*theta[1])^{theta[2]}*log(t*theta[1])}
+  dtheta1_h_T<-function(t,theta){theta[2]^{2}*(theta[1]*t)^{theta[2]-1}}
+  dtheta2_h_T<-function(t,theta){theta[1]^{theta[2]}*t^{theta[2]-1}+theta[2]*theta[1]^{theta[2]}*t^{theta[2]-1}*(log(theta[1])+log(t))}
+  
+  fit_a<-survreg(Surv(times,event)~1,dist = 'weibull',data=data_optim)
+  theta1_a<-as.numeric(exp(-fit_a$coefficients)) # exp(-mu)
+  theta2_a<-1/fit_a$scale # 1/sigma 
+  
+  fit_b<-survreg(Surv(times,times/times)~1,dist = 'weibull',data=data_optim)
+  theta1_b<-as.numeric(exp(-fit_b$coefficients)) # exp(-mu)
+  theta2_b<-1/fit_b$scale # 1/sigma 
+  
+  H_C<-function(c,gamma){ log(1+(c*gamma[1])^{gamma[2]})}
+  h_C<-function(c,gamma){(gamma[2]*gamma[1]^{gamma[2]}*c^{gamma[2]-1})/(1+(c*gamma[1])^{gamma[2]})}
+  log_h_C<-function(c,gamma){log(gamma[2]) + gamma[2]*log(gamma[1]) + (gamma[2]-1)*log(c)-log(1+(c*gamma[1])^{gamma[2]})}
+  dgamma1_H_C<-function(c,gamma){(gamma[2]*c^{gamma[2]}*gamma[1]^{gamma[2]-1})/(1+(c*gamma[1])^{gamma[2]})}
+  dgamma2_H_C<-function(c,gamma){(log(c*gamma[1])*(c*gamma[1])^{gamma[2]})/(1+(c*gamma[1])^{gamma[2]})}
+  dgamma1_h_C<-function(c,gamma){(gamma[2]^{2}*gamma[1]^{gamma[2]-1}*c^{gamma[2]-1})/((1+(c*gamma[1])^{gamma[2]})^{2})}
+  dgamma2_h_C<-function(c,gamma){(gamma[1]^{gamma[2]}*c^{gamma[2]-1}*(1+(gamma[1]*c)^{gamma[2]}+gamma[2]*log(c*gamma[1])))/((1+(c*gamma[1])^{gamma[2]})^{2})}
+  
+  fit_a<-survreg(Surv(times,event)~1,dist = 'loglogistic',data=data_optim)
+  gamma1_a<-exp(-fit_a$coefficients) 
+  gamma2_a<-1/fit_a$scale # 1/sigma 
+  
+  fit_b<-survreg(Surv(times,times/times)~1,dist = 'loglogistic',data=data_optim)
+  gamma1_b<-exp(-fit_b$coefficients) 
+  gamma2_b<-1/fit_b$scale # 1/sigma     
+  
+  initials_a <- c(theta1_a,theta2_a,gamma1_a,gamma2_a)
+  initials_b <- c(theta1_b,theta2_b,gamma1_b,gamma2_b)
+  
+  for (i in 1:length(alpha)){
+        
+
+       opt_a<-optim(par=initials_a,
+                        fn=loglikelihood2,
+                        gr=grad,
+                        alpha=alpha[i],
+                        H_T=H_T,
+                        H_C=H_C,
+                        H_alpha=H_alpha,
+                        H_alpha_inv=H_alpha_inv,
+                        log_h_alpha=log_h_alpha,
+                        log_h_C=log_h_C,
+                        log_h_T=log_h_T,
+                        h_C=h_C,
+                        h_T=h_T,
+                        h_alpha=h_alpha,
+                        dh_alpha=dh_alpha,
+                        dtheta1_H_T=dtheta1_H_T,
+                        dtheta2_H_T=dtheta2_H_T,
+                        dtheta1_h_T=dtheta1_h_T,
+                        dtheta2_h_T=dtheta2_h_T,
+                        dgamma1_H_C=dgamma1_H_C,
+                        dgamma2_H_C=dgamma2_H_C,
+                        dgamma1_h_C=dgamma1_h_C,
+                        dgamma2_h_C=dgamma2_h_C,
+                        data=data_optim,
+                        method="BFGS",
+                        control=list(fnscale=-1),
+                        hessian=TRUE)
+           
+       opt_b<-optim(par=initials_b,
+                        fn=loglikelihood2,
+                        gr=grad,
+                        alpha=alpha[i],
+                        H_T=H_T,
+                        H_C=H_C,
+                        H_alpha=H_alpha,
+                        H_alpha_inv=H_alpha_inv,
+                        log_h_alpha=log_h_alpha,
+                        log_h_C=log_h_C,
+                        log_h_T=log_h_T,
+                        h_C=h_C,
+                        h_T=h_T,
+                        h_alpha=h_alpha,
+                        dh_alpha=dh_alpha,
+                        dtheta1_H_T=dtheta1_H_T,
+                        dtheta2_H_T=dtheta2_H_T,
+                        dtheta1_h_T=dtheta1_h_T,
+                        dtheta2_h_T=dtheta2_h_T,
+                        dgamma1_H_C=dgamma1_H_C,
+                        dgamma2_H_C=dgamma2_H_C,
+                        dgamma1_h_C=dgamma1_h_C,
+                        dgamma2_h_C=dgamma2_h_C,
+                        data=data_optim,
+                        method="BFGS",
+                        control=list(fnscale=-1),
+                        hessian=TRUE )
+
+         
+        m_c <- max(opt_a$par[1]-opt_b$par[1],opt_a$par[2]-opt_b$par[2],opt_a$par[3]-opt_b$par[3],opt_a$par[4]-opt_b$par[4])
+        
+        if(abs(m_c) < tol){ ## change
+            max <- opt_a$par
+            hess <- opt_a$hessian
+        }else{
+          if(opt_b$value > opt_a$value){
+            max <- opt_b$par
+            hess <- opt_b$hessian
+          }else{
+            max <- opt_a$par
+            hess <- opt_a$hessian
+          }}
+
+        nas <- sum(is.na(hess))
+        inv_hess <- try(solve(-hess))
+        if((!is.na(nas)) & (class(inv_hess)!='try-error')){
+          se <- sqrt(diag(solve(-hess))) 
+        }else{
+          se <- rep(0,length(max))
+        }
+        
+        res_table12$convergence_a[i] <- opt_a$convergence
+        res_table12$convergence_b[i] <- opt_b$convergence
+        res_table12$alpha[i] <- alpha[i] 
+        res_table12$theta1[i] <- max[1]
+        res_table12$theta2[i] <- max[2]
+        res_table12$gamma1[i] <- max[3]
+        res_table12$gamma2[i] <- max[4]
+        res_table12$ci_theta1_min[i] <- max[1]-1.96*se[1]
+        res_table12$ci_theta1_max[i] <- max[1]+1.96*se[1]
+        res_table12$ci_theta2_min[i] <- max[2]-1.96*se[2]
+        res_table12$ci_theta2_max[i] <- max[2]+1.96*se[2]
+        res_table12$ci_gamma1_min[i] <- max[3]-1.96*se[3]
+        res_table12$ci_gamma1_max[i] <- max[3]+1.96*se[3]
+        res_table12$ci_gamma2_min[i] <- max[4]-1.96*se[4]
+        res_table12$ci_gamma2_max[i] <- max[4]+1.96*se[4]
+  }
+
+```
+
+
+
+## Gompertz(H_alpha) - Gompertz(t) - Weibull (c)
+
+```{r g-g-w}
+ res_table13 <- data.frame(matrix(ncol=length(names[[2]]),nrow=50,
+                                  dimnames=names))
+
+
+  H_alpha<-function(u,alpha){(exp(alpha*u) - 1)/alpha}
+  h_alpha<-function(u,alpha){exp(alpha*u)}
+  H_alpha_inv<-function(u,alpha){(1/alpha)*log(alpha*u+1)}
+  log_h_alpha<-function(u,alpha){alpha * u} 
+  dh_alpha<-function(u,alpha){alpha*exp(alpha*u)}
+  
+  #distribution of t
+  
+  H_T<-function(t,theta){ exp((t*theta[1])^theta[2])-1}
+  h_T<-function(t,theta){theta[2]*theta[1]^{theta[2]}* exp((t*theta[1])^theta[2])*t^{theta[2]-1}}
+  log_h_T<-function(t,theta){log(theta[2]) + theta[2]*log(theta[1]) + (t*theta[1])^theta[2] + (theta[2]-1)*log(t)}
+  dtheta1_H_T<-function(t,theta){theta[2]*exp((t*theta[1])^theta[2])*t^{theta[2]}*theta[1]^{theta[2]-1}}
+  dtheta2_H_T<-function(t,theta){exp((t*theta[1])^theta[2])*log(t*theta[1])*(t*theta[1])^{theta[2]}}
+  dtheta1_h_T<-function(t,theta){theta[2]^{2}*t^{theta[2]-1}*exp((t*theta[1])^theta[2])*(t^{theta[2]}*theta[1]^{2*theta[2]-1}+theta[1]^{theta[2]-1})}
+  dtheta2_h_T<-function(t,theta){exp((t*theta[1])^theta[2])*t^{theta[2]-1}*theta[1]^{theta[2]}+theta[2]*(
+      exp((t*theta[1])^theta[2])*theta[1]^{theta[2]}*t^{theta[2]-1}*log(theta[1])+theta[1]^{theta[2]}*(exp((t*theta[1])^theta[2])*theta[1]^{theta[2]}*t^{2*theta[2]-1}*log(t*theta[1])+exp((t*theta[1])^theta[2])*t^{theta[2]-1}*log(t)))}
+  
+  fit_a<-flexsurvreg(Surv(times,event)~1,dist = custom.gompt,data=data_optim) 
+  theta1_a<-exp(fit_a$coefficients[1]) # exp(coeff[1]) 
+  theta2_a<-exp(fit_a$coefficients[2]) # exp(coeff[2])
+  
+  fit_b<-flexsurvreg(Surv(times,times/times)~1,dist = custom.gompt,data=data_optim)
+  theta1_b<-exp(fit_b$coefficients[1]) # exp(coeff[1])
+  theta2_b<-exp(fit_b$coefficients[2]) # exp(coeff[2])
+  
+  H_C<-function(c,gamma){ (c*gamma[1])^gamma[2]}
+  h_C <-function(c,gamma){gamma[2]*gamma[1]^{gamma[2]}*c^{gamma[2]-1}}
+  log_h_C<-function(c,gamma){log(gamma[2]) + gamma[2]*log(gamma[1]) + (gamma[2]-1)*log(c)}
+  dgamma1_H_C<-function(c,gamma){gamma[2]*c^{gamma[2]}*gamma[1]^{gamma[2]-1}}
+  dgamma2_H_C<-function(c,gamma){(c*gamma[1])^{gamma[2]}*log(c*gamma[1])}
+  dgamma1_h_C<-function(c,gamma){gamma[2]^{2}*(gamma[1]*c)^{gamma[2]-1}}
+  dgamma2_h_C<-function(c,gamma){gamma[1]^{gamma[2]}*c^{gamma[2]-1}+gamma[2]*gamma[1]^{gamma[2]}*c^{gamma[2]-1}*(log(gamma[1])+log(c))}
+  
+  
+  fit_a<-survreg(Surv(times,event)~1,dist = 'weibull',data=data_optim)
+  gamma1_a<-as.numeric(exp(-fit_a$coefficients)) # exp(-mu)
+  gamma2_a<-1/fit_a$scale # 1/sigma 
+  
+  fit_b<-survreg(Surv(times,times/times)~1,dist = 'weibull',data=data_optim)
+  gamma1_b<-as.numeric(exp(-fit_b$coefficients)) # exp(-mu)
+  gamma2_b<-1/fit_b$scale # 1/sigma 
+  
+  initials_a <- c(theta1_a,theta2_a,gamma1_a,gamma2_a)
+  initials_b <- c(theta1_b,theta2_b,gamma1_b,gamma2_b)
+  
+  for (i in 1:length(alpha)){
+        
+
+       opt_a<-optim(par=initials_a,
+                        fn=loglikelihood2,
+                        gr=grad,
+                        alpha=alpha[i],
+                        H_T=H_T,
+                        H_C=H_C,
+                        H_alpha=H_alpha,
+                        H_alpha_inv=H_alpha_inv,
+                        log_h_alpha=log_h_alpha,
+                        log_h_C=log_h_C,
+                        log_h_T=log_h_T,
+                        h_C=h_C,
+                        h_T=h_T,
+                        h_alpha=h_alpha,
+                        dh_alpha=dh_alpha,
+                        dtheta1_H_T=dtheta1_H_T,
+                        dtheta2_H_T=dtheta2_H_T,
+                        dtheta1_h_T=dtheta1_h_T,
+                        dtheta2_h_T=dtheta2_h_T,
+                        dgamma1_H_C=dgamma1_H_C,
+                        dgamma2_H_C=dgamma2_H_C,
+                        dgamma1_h_C=dgamma1_h_C,
+                        dgamma2_h_C=dgamma2_h_C,
+                        data=data_optim,
+                        method="BFGS",
+                        control=list(fnscale=-1),
+                        hessian=TRUE)
+           
+       opt_b<-optim(par=initials_b,
+                        fn=loglikelihood2,
+                        gr=grad,
+                        alpha=alpha[i],
+                        H_T=H_T,
+                        H_C=H_C,
+                        H_alpha=H_alpha,
+                        H_alpha_inv=H_alpha_inv,
+                        log_h_alpha=log_h_alpha,
+                        log_h_C=log_h_C,
+                        log_h_T=log_h_T,
+                        h_C=h_C,
+                        h_T=h_T,
+                        h_alpha=h_alpha,
+                        dh_alpha=dh_alpha,
+                        dtheta1_H_T=dtheta1_H_T,
+                        dtheta2_H_T=dtheta2_H_T,
+                        dtheta1_h_T=dtheta1_h_T,
+                        dtheta2_h_T=dtheta2_h_T,
+                        dgamma1_H_C=dgamma1_H_C,
+                        dgamma2_H_C=dgamma2_H_C,
+                        dgamma1_h_C=dgamma1_h_C,
+                        dgamma2_h_C=dgamma2_h_C,
+                        data=data_optim,
+                        method="BFGS",
+                        control=list(fnscale=-1),
+                        hessian=TRUE )
+
+         
+        m_c <- max(opt_a$par[1]-opt_b$par[1],opt_a$par[2]-opt_b$par[2],opt_a$par[3]-opt_b$par[3],opt_a$par[4]-opt_b$par[4])
+        
+          if(abs(m_c) < tol){
+            max <- opt_a$par
+            hess <- opt_a$hessian
+        }else{
+          if(opt_b$value > opt_a$value){
+            max <- opt_b$par
+            hess <- opt_b$hessian
+          }else{
+            max <- opt_a$par
+            hess <- opt_a$hessian
+          }}
+
+        nas <- sum(is.na(hess))
+        inv_hess <- try(solve(-hess))
+        if((!is.na(nas)) & (class(inv_hess)!='try-error')){
+          se <- sqrt(diag(solve(-hess))) 
+        }else{
+          se <- rep(0,length(max))
+        }
+        
+        res_table13$convergence_a[i] <- opt_a$convergence
+        res_table13$convergence_b[i] <- opt_b$convergence
+        res_table13$alpha[i] <- alpha[i] 
+        res_table13$theta1[i] <- max[1]
+        res_table13$theta2[i] <- max[2]
+        res_table13$gamma1[i] <- max[3]
+        res_table13$gamma2[i] <- max[4]
+        res_table13$ci_theta1_min[i] <- max[1]-1.96*se[1]
+        res_table13$ci_theta1_max[i] <- max[1]+1.96*se[1]
+        res_table13$ci_theta2_min[i] <- max[2]-1.96*se[2]
+        res_table13$ci_theta2_max[i] <- max[2]+1.96*se[2]
+        res_table13$ci_gamma1_min[i] <- max[3]-1.96*se[3]
+        res_table13$ci_gamma1_max[i] <- max[3]+1.96*se[3]
+        res_table13$ci_gamma2_min[i] <- max[4]-1.96*se[4]
+        res_table13$ci_gamma2_max[i] <- max[4]+1.96*se[4]
+  }
+
+```
+
+
+
+## Gompertz(H_alpha) - Gompertz(t) - Gompertz (c)
+
+```{r w-g-g}
+ res_table14 <- data.frame(matrix(ncol=length(names[[2]]),nrow=50,
+                                  dimnames=names))
+
+
+  H_alpha<-function(u,alpha){(exp(alpha*u) - 1)/alpha}
+  h_alpha<-function(u,alpha){exp(alpha*u)}
+  H_alpha_inv<-function(u,alpha){(1/alpha)*log(alpha*u+1)}
+  log_h_alpha<-function(u,alpha){alpha * u} 
+  dh_alpha<-function(u,alpha){alpha*exp(alpha*u)}
+  
+  #distribution of t
+  
+  H_T<-function(t,theta){ exp((t*theta[1])^theta[2])-1}
+  h_T<-function(t,theta){theta[2]*theta[1]^{theta[2]}* exp((t*theta[1])^theta[2])*t^{theta[2]-1}}
+  log_h_T<-function(t,theta){log(theta[2]) + theta[2]*log(theta[1]) + (t*theta[1])^theta[2] + (theta[2]-1)*log(t)}
+  dtheta1_H_T<-function(t,theta){theta[2]*exp((t*theta[1])^theta[2])*t^{theta[2]}*theta[1]^{theta[2]-1}}
+  dtheta2_H_T<-function(t,theta){exp((t*theta[1])^theta[2])*log(t*theta[1])*(t*theta[1])^{theta[2]}}
+  dtheta1_h_T<-function(t,theta){theta[2]^{2}*t^{theta[2]-1}*exp((t*theta[1])^theta[2])*(t^{theta[2]}*theta[1]^{2*theta[2]-1}+theta[1]^{theta[2]-1})}
+  dtheta2_h_T<-function(t,theta){exp((t*theta[1])^theta[2])*t^{theta[2]-1}*theta[1]^{theta[2]}+theta[2]*(
+      exp((t*theta[1])^theta[2])*theta[1]^{theta[2]}*t^{theta[2]-1}*log(theta[1])+theta[1]^{theta[2]}*(exp((t*theta[1])^theta[2])*theta[1]^{theta[2]}*t^{2*theta[2]-1}*log(t*theta[1])+exp((t*theta[1])^theta[2])*t^{theta[2]-1}*log(t)))}
+  
+  fit_a<-flexsurvreg(Surv(times,event)~1,dist = custom.gompt,data=data_optim)
+  theta1_a<-exp(fit_a$coefficients[1]) # exp(coeff[1])
+  theta2_a<-exp(fit_a$coefficients[2]) # exp(coeff[2])
+  
+  fit_b<-flexsurvreg(Surv(times,times/times)~1,dist = custom.gompt,data=data_optim)
+  theta1_b<-exp(fit_b$coefficients[1]) # exp(coeff[1])
+  theta2_b<-exp(fit_b$coefficients[2]) # exp(coeff[2])
+  
+  H_C<-function(c,gamma){ exp((c*gamma[1])^gamma[2])-1}
+  h_C<-function(c,gamma){gamma[2]*gamma[1]^{gamma[2]}* exp((c*gamma[1])^gamma[2])*c^{gamma[2]-1}}
+  log_h_C<-function(c,gamma){log(gamma[2]) + gamma[2]*log(gamma[1]) + (c*gamma[1])^gamma[2] + (gamma[2]-1)*log(c)}
+  dgamma1_H_C<-function(c,gamma){gamma[2]*exp((c*gamma[1])^gamma[2])*c^{gamma[2]}*gamma[1]^{gamma[2]-1}}
+  dgamma2_H_C<-function(c,gamma){exp((c*gamma[1])^gamma[2])*log(c*gamma[1])*(c*gamma[1])^{gamma[2]}}
+  dgamma1_h_C<-function(c,gamma){gamma[2]^{2}*c^{gamma[2]-1}*exp((c*gamma[1])^gamma[2])*(c^{gamma[2]}*gamma[1]^{2*gamma[2]-1}+gamma[1]^{gamma[2]-1})}
+  dgamma2_h_C<-function(c,gamma){exp((c*gamma[1])^gamma[2])*c^{gamma[2]-1}*gamma[1]^{gamma[2]}+gamma[2]*(
+      exp((c*gamma[1])^gamma[2])*gamma[1]^{gamma[2]}*c^{gamma[2]-1}*log(gamma[1])+gamma[1]^{gamma[2]}*(exp((c*gamma[1])^gamma[2])*gamma[1]^{gamma[2]}*c^{2*gamma[2]-1}*log(c*gamma[1])+exp((c*gamma[1])^gamma[2])*c^{gamma[2]-1}*log(c)))}
+  
+  fit_a<-flexsurvreg(Surv(times,event)~1,dist = custom.gompt,data=data_optim)
+  gamma1_a<-exp(fit_a$coefficients[1]) # exp(coeff[1])
+  gamma2_a<-exp(fit_a$coefficients[2]) # exp(coeff[2])
+  
+  fit_b<-flexsurvreg(Surv(times,times/times)~1,dist = custom.gompt,data=data_optim)
+  gamma1_b<-exp(fit_b$coefficients[1]) # exp(coeff[1]) 
+  gamma2_b<-exp(fit_b$coefficients[2]) # exp(coeff[2])
+  
+  initials_a <- c(theta1_a,theta2_a,gamma1_a,gamma2_a)
+  initials_b <- c(theta1_b,theta2_b,gamma1_b,gamma2_b)
+  
+  for (i in 1:length(alpha)){
+        
+
+       opt_a<-optim(par=initials_a,
+                        fn=loglikelihood2,
+                        gr=grad,
+                        alpha=alpha[i],
+                        H_T=H_T,
+                        H_C=H_C,
+                        H_alpha=H_alpha,
+                        H_alpha_inv=H_alpha_inv,
+                        log_h_alpha=log_h_alpha,
+                        log_h_C=log_h_C,
+                        log_h_T=log_h_T,
+                        h_C=h_C,
+                        h_T=h_T,
+                        h_alpha=h_alpha,
+                        dh_alpha=dh_alpha,
+                        dtheta1_H_T=dtheta1_H_T,
+                        dtheta2_H_T=dtheta2_H_T,
+                        dtheta1_h_T=dtheta1_h_T,
+                        dtheta2_h_T=dtheta2_h_T,
+                        dgamma1_H_C=dgamma1_H_C,
+                        dgamma2_H_C=dgamma2_H_C,
+                        dgamma1_h_C=dgamma1_h_C,
+                        dgamma2_h_C=dgamma2_h_C,
+                        data=data_optim,
+                        method="BFGS",
+                        control=list(fnscale=-1),
+                        hessian=TRUE)
+           
+       opt_b<-optim(par=initials_b,
+                        fn=loglikelihood2,
+                        gr=grad,
+                        alpha=alpha[i],
+                        H_T=H_T,
+                        H_C=H_C,
+                        H_alpha=H_alpha,
+                        H_alpha_inv=H_alpha_inv,
+                        log_h_alpha=log_h_alpha,
+                        log_h_C=log_h_C,
+                        log_h_T=log_h_T,
+                        h_C=h_C,
+                        h_T=h_T,
+                        h_alpha=h_alpha,
+                        dh_alpha=dh_alpha,
+                        dtheta1_H_T=dtheta1_H_T,
+                        dtheta2_H_T=dtheta2_H_T,
+                        dtheta1_h_T=dtheta1_h_T,
+                        dtheta2_h_T=dtheta2_h_T,
+                        dgamma1_H_C=dgamma1_H_C,
+                        dgamma2_H_C=dgamma2_H_C,
+                        dgamma1_h_C=dgamma1_h_C,
+                        dgamma2_h_C=dgamma2_h_C,
+                        data=data_optim,
+                        method="BFGS",
+                        control=list(fnscale=-1),
+                        hessian=TRUE )
+
+         
+        m_c <- max(opt_a$par[1]-opt_b$par[1],opt_a$par[2]-opt_b$par[2],opt_a$par[3]-opt_b$par[3],opt_a$par[4]-opt_b$par[4])
+        
+          if(abs(m_c) < tol){
+            max <- opt_a$par
+            hess <- opt_a$hessian
+        }else{
+          if(opt_b$value > opt_a$value){
+            max <- opt_b$par
+            hess <- opt_b$hessian
+          }else{
+            max <- opt_a$par
+            hess <- opt_a$hessian
+          }}
+
+        nas <- sum(is.na(hess))
+        inv_hess <- try(solve(-hess))
+        if((!is.na(nas)) & (class(inv_hess)!='try-error')){
+          se <- sqrt(diag(solve(-hess))) 
+        }else{
+          se <- rep(0,length(max))
+        }
+        
+        res_table14$convergence_a[i] <- opt_a$convergence
+        res_table14$convergence_b[i] <- opt_b$convergence
+        res_table14$alpha[i] <- alpha[i] 
+        res_table14$theta1[i] <- max[1]
+        res_table14$theta2[i] <- max[2]
+        res_table14$gamma1[i] <- max[3]
+        res_table14$gamma2[i] <- max[4]
+        res_table14$ci_theta1_min[i] <- max[1]-1.96*se[1]
+        res_table14$ci_theta1_max[i] <- max[1]+1.96*se[1]
+        res_table14$ci_theta2_min[i] <- max[2]-1.96*se[2]
+        res_table14$ci_theta2_max[i] <- max[2]+1.96*se[2]
+        res_table14$ci_gamma1_min[i] <- max[3]-1.96*se[3]
+        res_table14$ci_gamma1_max[i] <- max[3]+1.96*se[3]
+        res_table14$ci_gamma2_min[i] <- max[4]-1.96*se[4]
+        res_table14$ci_gamma2_max[i] <- max[4]+1.96*se[4]
+  }
+
+```
+
+
+## Gompertz(H_alpha) - Gompertz(t) - Loglogistic(c)
+
+```{r w-g-l}
+ res_table15 <- data.frame(matrix(ncol=length(names[[2]]),nrow=50,
+                                  dimnames=names))
+
+
+  H_alpha<-function(u,alpha){(exp(alpha*u) - 1)/alpha}
+  h_alpha<-function(u,alpha){exp(alpha*u)}
+  H_alpha_inv<-function(u,alpha){(1/alpha)*log(alpha*u+1)}
+  log_h_alpha<-function(u,alpha){alpha * u} 
+  dh_alpha<-function(u,alpha){alpha*exp(alpha*u)}
+  
+  #distribution of t
+  
+  H_T<-function(t,theta){ exp((t*theta[1])^theta[2])-1}
+  h_T<-function(t,theta){theta[2]*theta[1]^{theta[2]}* exp((t*theta[1])^theta[2])*t^{theta[2]-1}}
+  log_h_T<-function(t,theta){log(theta[2]) + theta[2]*log(theta[1]) + (t*theta[1])^theta[2] + (theta[2]-1)*log(t)}
+  dtheta1_H_T<-function(t,theta){theta[2]*exp((t*theta[1])^theta[2])*t^{theta[2]}*theta[1]^{theta[2]-1}}
+  dtheta2_H_T<-function(t,theta){exp((t*theta[1])^theta[2])*log(t*theta[1])*(t*theta[1])^{theta[2]}}
+  dtheta1_h_T<-function(t,theta){theta[2]^{2}*t^{theta[2]-1}*exp((t*theta[1])^theta[2])*(t^{theta[2]}*theta[1]^{2*theta[2]-1}+theta[1]^{theta[2]-1})}
+  dtheta2_h_T<-function(t,theta){exp((t*theta[1])^theta[2])*t^{theta[2]-1}*theta[1]^{theta[2]}+theta[2]*(
+      exp((t*theta[1])^theta[2])*theta[1]^{theta[2]}*t^{theta[2]-1}*log(theta[1])+theta[1]^{theta[2]}*(exp((t*theta[1])^theta[2])*theta[1]^{theta[2]}*t^{2*theta[2]-1}*log(t*theta[1])+exp((t*theta[1])^theta[2])*t^{theta[2]-1}*log(t)))}
+  
+  fit_a<-flexsurvreg(Surv(times,event)~1,dist = custom.gompt,data=data_optim)
+  theta1_a<-exp(fit_a$coefficients[1]) # exp(coeff[1])
+  theta2_a<-exp(fit_a$coefficients[2]) # exp(coeff[2])
+  
+  fit_b<-flexsurvreg(Surv(times,times/times)~1,dist = custom.gompt,data=data_optim)
+  theta1_b<-exp(fit_b$coefficients[1]) # exp(coeff[1])
+  theta2_b<-exp(fit_b$coefficients[2]) # exp(coeff[2])
+  
+  H_C<-function(c,gamma){ log(1+(c*gamma[1])^{gamma[2]})}
+  h_C<-function(c,gamma){(gamma[2]*gamma[1]^{gamma[2]}*c^{gamma[2]-1})/(1+(c*gamma[1])^{gamma[2]})}
+  log_h_C<-function(c,gamma){log(gamma[2]) + gamma[2]*log(gamma[1]) + (gamma[2]-1)*log(c)-log(1+(c*gamma[1])^{gamma[2]})}
+  dgamma1_H_C<-function(c,gamma){(gamma[2]*c^{gamma[2]}*gamma[1]^{gamma[2]-1})/(1+(c*gamma[1])^{gamma[2]})}
+  dgamma2_H_C<-function(c,gamma){(log(c*gamma[1])*(c*gamma[1])^{gamma[2]})/(1+(c*gamma[1])^{gamma[2]})}
+  dgamma1_h_C<-function(c,gamma){(gamma[2]^{2}*gamma[1]^{gamma[2]-1}*c^{gamma[2]-1})/((1+(c*gamma[1])^{gamma[2]})^{2})}
+  dgamma2_h_C<-function(c,gamma){(gamma[1]^{gamma[2]}*c^{gamma[2]-1}*(1+(gamma[1]*c)^{gamma[2]}+gamma[2]*log(c*gamma[1])))/((1+(c*gamma[1])^{gamma[2]})^{2})}
+  
+  fit_a<-survreg(Surv(times,event)~1,dist = 'loglogistic',data=data_optim)
+  gamma1_a<-exp(-fit_a$coefficients) 
+  gamma2_a<-1/fit_a$scale # 1/sigma 
+  
+  fit_b<-survreg(Surv(times,times/times)~1,dist = 'loglogistic',data=data_optim)
+  gamma1_b<-exp(-fit_b$coefficients) 
+  gamma2_b<-1/fit_b$scale # 1/sigma      
+  
+  initials_a <- c(theta1_a,theta2_a,gamma1_a,gamma2_a)
+  initials_b <- c(theta1_b,theta2_b,gamma1_b,gamma2_b)
+  
+  for (i in 1:length(alpha)){
+        
+
+       opt_a<-optim(par=initials_a,
+                        fn=loglikelihood2,
+                        gr=grad,
+                        alpha=alpha[i],
+                        H_T=H_T,
+                        H_C=H_C,
+                        H_alpha=H_alpha,
+                        H_alpha_inv=H_alpha_inv,
+                        log_h_alpha=log_h_alpha,
+                        log_h_C=log_h_C,
+                        log_h_T=log_h_T,
+                        h_C=h_C,
+                        h_T=h_T,
+                        h_alpha=h_alpha,
+                        dh_alpha=dh_alpha,
+                        dtheta1_H_T=dtheta1_H_T,
+                        dtheta2_H_T=dtheta2_H_T,
+                        dtheta1_h_T=dtheta1_h_T,
+                        dtheta2_h_T=dtheta2_h_T,
+                        dgamma1_H_C=dgamma1_H_C,
+                        dgamma2_H_C=dgamma2_H_C,
+                        dgamma1_h_C=dgamma1_h_C,
+                        dgamma2_h_C=dgamma2_h_C,
+                        data=data_optim,
+                        method="BFGS",
+                        control=list(fnscale=-1),
+                        hessian=TRUE)
+           
+       opt_b<-optim(par=initials_b,
+                        fn=loglikelihood2,
+                        gr=grad,
+                        alpha=alpha[i],
+                        H_T=H_T,
+                        H_C=H_C,
+                        H_alpha=H_alpha,
+                        H_alpha_inv=H_alpha_inv,
+                        log_h_alpha=log_h_alpha,
+                        log_h_C=log_h_C,
+                        log_h_T=log_h_T,
+                        h_C=h_C,
+                        h_T=h_T,
+                        h_alpha=h_alpha,
+                        dh_alpha=dh_alpha,
+                        dtheta1_H_T=dtheta1_H_T,
+                        dtheta2_H_T=dtheta2_H_T,
+                        dtheta1_h_T=dtheta1_h_T,
+                        dtheta2_h_T=dtheta2_h_T,
+                        dgamma1_H_C=dgamma1_H_C,
+                        dgamma2_H_C=dgamma2_H_C,
+                        dgamma1_h_C=dgamma1_h_C,
+                        dgamma2_h_C=dgamma2_h_C,
+                        data=data_optim,
+                        method="BFGS",
+                        control=list(fnscale=-1),
+                        hessian=TRUE )
+
+         
+        m_c <- max(opt_a$par[1]-opt_b$par[1],opt_a$par[2]-opt_b$par[2],opt_a$par[3]-opt_b$par[3],opt_a$par[4]-opt_b$par[4])
+        
+          if(abs(m_c) < tol){
+            max <- opt_a$par
+            hess <- opt_a$hessian
+        }else{
+          if(opt_b$value > opt_a$value){
+            max <- opt_b$par
+            hess <- opt_b$hessian
+          }else{
+            max <- opt_a$par
+            hess <- opt_a$hessian
+          }}
+
+        nas <- sum(is.na(hess))
+        inv_hess <- try(solve(-hess))
+        if((!is.na(nas)) & (class(inv_hess)!='try-error')){
+          se <- sqrt(diag(solve(-hess))) 
+        }else{
+          se <- rep(0,length(max))
+        }
+        
+        res_table15$convergence_a[i] <- opt_a$convergence
+        res_table15$convergence_b[i] <- opt_b$convergence
+        res_table15$alpha[i] <- alpha[i] 
+        res_table15$theta1[i] <- max[1]
+        res_table15$theta2[i] <- max[2]
+        res_table15$gamma1[i] <- max[3]
+        res_table15$gamma2[i] <- max[4]
+        res_table15$ci_theta1_min[i] <- max[1]-1.96*se[1]
+        res_table15$ci_theta1_max[i] <- max[1]+1.96*se[1]
+        res_table15$ci_theta2_min[i] <- max[2]-1.96*se[2]
+        res_table15$ci_theta2_max[i] <- max[2]+1.96*se[2]
+        res_table15$ci_gamma1_min[i] <- max[3]-1.96*se[3]
+        res_table15$ci_gamma1_max[i] <- max[3]+1.96*se[3]
+        res_table15$ci_gamma2_min[i] <- max[4]-1.96*se[4]
+        res_table15$ci_gamma2_max[i] <- max[4]+1.96*se[4]
+  }
+
+```
+
+
+## Gompertz(H_alpha) - Loglogistic(t) - Weibull(C)
+
+```{r w-l-w}
+ res_table16 <- data.frame(matrix(ncol=length(names[[2]]),nrow=50,
+                                  dimnames=names))
+
+
+  H_alpha<-function(u,alpha){(exp(alpha*u) - 1)/alpha}
+  h_alpha<-function(u,alpha){exp(alpha*u)}
+  H_alpha_inv<-function(u,alpha){(1/alpha)*log(alpha*u+1)}
+  log_h_alpha<-function(u,alpha){alpha * u} 
+  dh_alpha<-function(u,alpha){alpha*exp(alpha*u)}
+  
+  #distribution of t
+  
+  H_T<-function(t,theta){ log(1+(t*theta[1])^{theta[2]})}
+  h_T<-function(t,theta){(theta[2]*theta[1]^{theta[2]}*t^{theta[2]-1})/(1+(t*theta[1])^{theta[2]})}
+  log_h_T<-function(t,theta){log(theta[2]) + theta[2]*log(theta[1]) + (theta[2]-1)*log(t)-log(1+(t*theta[1])^{theta[2]})}
+  dtheta1_H_T<-function(t,theta){(theta[2]*t^{theta[2]}*theta[1]^{theta[2]-1})/(1+(t*theta[1])^{theta[2]})}
+  dtheta2_H_T<-function(t,theta){(log(t*theta[1])*(t*theta[1])^{theta[2]})/(1+(t*theta[1])^{theta[2]})}
+  dtheta1_h_T<-function(t,theta){(theta[2]^{2}*theta[1]^{theta[2]-1}*t^{theta[2]-1})/((1+(t*theta[1])^{theta[2]})^{2})}
+  dtheta2_h_T<-function(t,theta){(theta[1]^{theta[2]}*t^{theta[2]-1}*(1+(theta[1]*t)^{theta[2]}+theta[2]*log(t*theta[1])))/((1+(t*theta[1])^{theta[2]})^{2})}
+  
+  fit_a<-survreg(Surv(times,event)~1,dist = 'loglogistic',data=data_optim)
+  theta1_a<-as.numeric(exp(-fit_a$coefficients)) # exp(-mu)
+  theta2_a<-1/fit_a$scale # 1/sigma 
+  
+  fit_b<-survreg(Surv(times,times/times)~1,dist = 'loglogistic',data=data_optim)
+  theta1_b<-as.numeric(exp(-fit_b$coefficients)) # exp(-mu)
+  theta2_b<-1/fit_b$scale # 1/sigma 
+  
+  H_C<-function(c,gamma){ (c*gamma[1])^gamma[2]}
+  h_C <-function(c,gamma){gamma[2]*gamma[1]^{gamma[2]}*c^{gamma[2]-1}}
+  log_h_C<-function(c,gamma){log(gamma[2]) + gamma[2]*log(gamma[1]) + (gamma[2]-1)*log(c)}
+  dgamma1_H_C<-function(c,gamma){gamma[2]*c^{gamma[2]}*gamma[1]^{gamma[2]-1}}
+  dgamma2_H_C<-function(c,gamma){(c*gamma[1])^{gamma[2]}*log(c*gamma[1])}
+  dgamma1_h_C<-function(c,gamma){gamma[2]^{2}*(gamma[1]*c)^{gamma[2]-1}}
+  dgamma2_h_C<-function(c,gamma){gamma[1]^{gamma[2]}*c^{gamma[2]-1}+gamma[2]*gamma[1]^{gamma[2]}*c^{gamma[2]-1}*(log(gamma[1])+log(c))}
+  
+  
+  fit_a<-survreg(Surv(times,event)~1,dist = 'weibull',data=data_optim)
+  gamma1_a<-as.numeric(exp(-fit_a$coefficients)) # exp(-mu)
+  gamma2_a<-1/fit_a$scale # 1/sigma 
+  
+  fit_b<-survreg(Surv(times,times/times)~1,dist = 'weibull',data=data_optim)
+  gamma1_b<-as.numeric(exp(-fit_b$coefficients)) # exp(-mu)
+  gamma2_b<-1/fit_b$scale # 1/sigma 
+  
+  initials_a <- c(theta1_a,theta2_a,gamma1_a,gamma2_a)
+  initials_b <- c(theta1_b,theta2_b,gamma1_b,gamma2_b)
+  
+  for (i in 1:length(alpha)){
+        
+
+       opt_a<-optim(par=initials_a,
+                        fn=loglikelihood2,
+                        gr=grad,
+                        alpha=alpha[i],
+                        H_T=H_T,
+                        H_C=H_C,
+                        H_alpha=H_alpha,
+                        H_alpha_inv=H_alpha_inv,
+                        log_h_alpha=log_h_alpha,
+                        log_h_C=log_h_C,
+                        log_h_T=log_h_T,
+                        h_C=h_C,
+                        h_T=h_T,
+                        h_alpha=h_alpha,
+                        dh_alpha=dh_alpha,
+                        dtheta1_H_T=dtheta1_H_T,
+                        dtheta2_H_T=dtheta2_H_T,
+                        dtheta1_h_T=dtheta1_h_T,
+                        dtheta2_h_T=dtheta2_h_T,
+                        dgamma1_H_C=dgamma1_H_C,
+                        dgamma2_H_C=dgamma2_H_C,
+                        dgamma1_h_C=dgamma1_h_C,
+                        dgamma2_h_C=dgamma2_h_C,
+                        data=data_optim,
+                        method="BFGS",
+                        control=list(fnscale=-1),
+                        hessian=TRUE)
+           
+       opt_b<-optim(par=initials_b,
+                        fn=loglikelihood2,
+                        gr=grad,
+                        alpha=alpha[i],
+                        H_T=H_T,
+                        H_C=H_C,
+                        H_alpha=H_alpha,
+                        H_alpha_inv=H_alpha_inv,
+                        log_h_alpha=log_h_alpha,
+                        log_h_C=log_h_C,
+                        log_h_T=log_h_T,
+                        h_C=h_C,
+                        h_T=h_T,
+                        h_alpha=h_alpha,
+                        dh_alpha=dh_alpha,
+                        dtheta1_H_T=dtheta1_H_T,
+                        dtheta2_H_T=dtheta2_H_T,
+                        dtheta1_h_T=dtheta1_h_T,
+                        dtheta2_h_T=dtheta2_h_T,
+                        dgamma1_H_C=dgamma1_H_C,
+                        dgamma2_H_C=dgamma2_H_C,
+                        dgamma1_h_C=dgamma1_h_C,
+                        dgamma2_h_C=dgamma2_h_C,
+                        data=data_optim,
+                        method="BFGS",
+                        control=list(fnscale=-1),
+                        hessian=TRUE )
+
+         
+        m_c <- max(opt_a$par[1]-opt_b$par[1],opt_a$par[2]-opt_b$par[2],opt_a$par[3]-opt_b$par[3],opt_a$par[4]-opt_b$par[4])
+        
+          if(abs(m_c) < tol){
+            max <- opt_a$par
+            hess <- opt_a$hessian
+        }else{
+          if(opt_b$value > opt_a$value){
+            max <- opt_b$par
+            hess <- opt_b$hessian
+          }else{
+            max <- opt_a$par
+            hess <- opt_a$hessian
+          }}
+
+        nas <- sum(is.na(hess))
+        inv_hess <- try(solve(-hess))
+        if((!is.na(nas)) & (class(inv_hess)!='try-error')){
+          se <- sqrt(diag(solve(-hess))) 
+        }else{
+          se <- rep(0,length(max))
+        }
+        
+        res_table16$convergence_a[i] <- opt_a$convergence
+        res_table16$convergence_b[i] <- opt_b$convergence
+        res_table16$alpha[i] <- alpha[i] 
+        res_table16$theta1[i] <- max[1]
+        res_table16$theta2[i] <- max[2]
+        res_table16$gamma1[i] <- max[3]
+        res_table16$gamma2[i] <- max[4]
+        res_table16$ci_theta1_min[i] <- max[1]-1.96*se[1]
+        res_table16$ci_theta1_max[i] <- max[1]+1.96*se[1]
+        res_table16$ci_theta2_min[i] <- max[2]-1.96*se[2]
+        res_table16$ci_theta2_max[i] <- max[2]+1.96*se[2]
+        res_table16$ci_gamma1_min[i] <- max[3]-1.96*se[3]
+        res_table16$ci_gamma1_max[i] <- max[3]+1.96*se[3]
+        res_table16$ci_gamma2_min[i] <- max[4]-1.96*se[4]
+        res_table16$ci_gamma2_max[i] <- max[4]+1.96*se[4]
+  }
+
+```
+
+
+## Gompertz(H_alpha) - Loglogistic(t) - Gompertz(C)
+
+```{r w-l-g}
+ res_table17 <- data.frame(matrix(ncol=length(names[[2]]),nrow=50,
+                                  dimnames=names))
+
+
+  H_alpha<-function(u,alpha){(exp(alpha*u) - 1)/alpha}
+  h_alpha<-function(u,alpha){exp(alpha*u)}
+  H_alpha_inv<-function(u,alpha){(1/alpha)*log(alpha*u+1)}
+  log_h_alpha<-function(u,alpha){alpha * u} 
+  dh_alpha<-function(u,alpha){alpha*exp(alpha*u)}
+  
+  #distribution of t
+  
+  H_T<-function(t,theta){ log(1+(t*theta[1])^{theta[2]})}
+  h_T<-function(t,theta){(theta[2]*theta[1]^{theta[2]}*t^{theta[2]-1})/(1+(t*theta[1])^{theta[2]})}
+  log_h_T<-function(t,theta){log(theta[2]) + theta[2]*log(theta[1]) + (theta[2]-1)*log(t)-log(1+(t*theta[1])^{theta[2]})}
+  dtheta1_H_T<-function(t,theta){(theta[2]*t^{theta[2]}*theta[1]^{theta[2]-1})/(1+(t*theta[1])^{theta[2]})}
+  dtheta2_H_T<-function(t,theta){(log(t*theta[1])*(t*theta[1])^{theta[2]})/(1+(t*theta[1])^{theta[2]})}
+  dtheta1_h_T<-function(t,theta){(theta[2]^{2}*theta[1]^{theta[2]-1}*t^{theta[2]-1})/((1+(t*theta[1])^{theta[2]})^{2})}
+  dtheta2_h_T<-function(t,theta){(theta[1]^{theta[2]}*t^{theta[2]-1}*(1+(theta[1]*t)^{theta[2]}+theta[2]*log(t*theta[1])))/((1+(t*theta[1])^{theta[2]})^{2})}
+  
+  fit_a<-survreg(Surv(times,event)~1,dist = 'loglogistic',data=data_optim)
+  theta1_a<-as.numeric(exp(-fit_a$coefficients)) # exp(-mu)
+  theta2_a<-1/fit_a$scale # 1/sigma 
+  
+  fit_b<-survreg(Surv(times,times/times)~1,dist = 'loglogistic',data=data_optim)
+  theta1_b<-as.numeric(exp(-fit_b$coefficients)) # exp(-mu)
+  theta2_b<-1/fit_b$scale # 1/sigma 
+  
+  H_C<-function(c,gamma){ exp((c*gamma[1])^gamma[2])-1}
+  h_C<-function(c,gamma){gamma[2]*gamma[1]^{gamma[2]}* exp((c*gamma[1])^gamma[2])*c^{gamma[2]-1}}
+  log_h_C<-function(c,gamma){log(gamma[2]) + gamma[2]*log(gamma[1]) + (c*gamma[1])^gamma[2] + (gamma[2]-1)*log(c)}
+  dgamma1_H_C<-function(c,gamma){gamma[2]*exp((c*gamma[1])^gamma[2])*c^{gamma[2]}*gamma[1]^{gamma[2]-1}}
+  dgamma2_H_C<-function(c,gamma){exp((c*gamma[1])^gamma[2])*log(c*gamma[1])*(c*gamma[1])^{gamma[2]}}
+  dgamma1_h_C<-function(c,gamma){gamma[2]^{2}*c^{gamma[2]-1}*exp((c*gamma[1])^gamma[2])*(c^{gamma[2]}*gamma[1]^{2*gamma[2]-1}+gamma[1]^{gamma[2]-1})}
+  dgamma2_h_C<-function(c,gamma){exp((c*gamma[1])^gamma[2])*c^{gamma[2]-1}*gamma[1]^{gamma[2]}+gamma[2]*(
+      exp((c*gamma[1])^gamma[2])*gamma[1]^{gamma[2]}*c^{gamma[2]-1}*log(gamma[1])+gamma[1]^{gamma[2]}*(exp((c*gamma[1])^gamma[2])*gamma[1]^{gamma[2]}*c^{2*gamma[2]-1}*log(c*gamma[1])+exp((c*gamma[1])^gamma[2])*c^{gamma[2]-1}*log(c)))}
+  
+  fit_a<-flexsurvreg(Surv(times,event)~1,dist = custom.gompt,data=data_optim)
+  gamma1_a<-exp(fit_a$coefficients[1]) # exp(coeff[1])
+  gamma2_a<-exp(fit_a$coefficients[2]) # exp(coeff[2])
+  
+  fit_b<-flexsurvreg(Surv(times,times/times)~1,dist = custom.gompt,data=data_optim)
+  gamma1_b<-exp(fit_b$coefficients[1]) # exp(coeff[1]) 
+  gamma2_b<-exp(fit_b$coefficients[2]) # exp(coeff[2])
+  
+  initials_a <- c(theta1_a,theta2_a,gamma1_a,gamma2_a)
+  initials_b <- c(theta1_b,theta2_b,gamma1_b,gamma2_b)
+  
+  for (i in 1:length(alpha)){
+        
+
+       opt_a<-optim(par=initials_a,
+                        fn=loglikelihood2,
+                        gr=grad,
+                        alpha=alpha[i],
+                        H_T=H_T,
+                        H_C=H_C,
+                        H_alpha=H_alpha,
+                        H_alpha_inv=H_alpha_inv,
+                        log_h_alpha=log_h_alpha,
+                        log_h_C=log_h_C,
+                        log_h_T=log_h_T,
+                        h_C=h_C,
+                        h_T=h_T,
+                        h_alpha=h_alpha,
+                        dh_alpha=dh_alpha,
+                        dtheta1_H_T=dtheta1_H_T,
+                        dtheta2_H_T=dtheta2_H_T,
+                        dtheta1_h_T=dtheta1_h_T,
+                        dtheta2_h_T=dtheta2_h_T,
+                        dgamma1_H_C=dgamma1_H_C,
+                        dgamma2_H_C=dgamma2_H_C,
+                        dgamma1_h_C=dgamma1_h_C,
+                        dgamma2_h_C=dgamma2_h_C,
+                        data=data_optim,
+                        method="BFGS",
+                        control=list(fnscale=-1),
+                        hessian=TRUE)
+           
+       opt_b<-optim(par=initials_b,
+                        fn=loglikelihood2,
+                        gr=grad,
+                        alpha=alpha[i],
+                        H_T=H_T,
+                        H_C=H_C,
+                        H_alpha=H_alpha,
+                        H_alpha_inv=H_alpha_inv,
+                        log_h_alpha=log_h_alpha,
+                        log_h_C=log_h_C,
+                        log_h_T=log_h_T,
+                        h_C=h_C,
+                        h_T=h_T,
+                        h_alpha=h_alpha,
+                        dh_alpha=dh_alpha,
+                        dtheta1_H_T=dtheta1_H_T,
+                        dtheta2_H_T=dtheta2_H_T,
+                        dtheta1_h_T=dtheta1_h_T,
+                        dtheta2_h_T=dtheta2_h_T,
+                        dgamma1_H_C=dgamma1_H_C,
+                        dgamma2_H_C=dgamma2_H_C,
+                        dgamma1_h_C=dgamma1_h_C,
+                        dgamma2_h_C=dgamma2_h_C,
+                        data=data_optim,
+                        method="BFGS",
+                        control=list(fnscale=-1),
+                        hessian=TRUE )
+
+         
+        m_c <- max(opt_a$par[1]-opt_b$par[1],opt_a$par[2]-opt_b$par[2],opt_a$par[3]-opt_b$par[3],opt_a$par[4]-opt_b$par[4])
+        
+          if(abs(m_c) < tol){
+            max <- opt_a$par
+            hess <- opt_a$hessian
+        }else{
+          if(opt_b$value > opt_a$value){
+            max <- opt_b$par
+            hess <- opt_b$hessian
+          }else{
+            max <- opt_a$par
+            hess <- opt_a$hessian
+          }}
+
+        nas <- sum(is.na(hess))
+        inv_hess <- try(solve(-hess))
+        if((!is.na(nas)) & (class(inv_hess)!='try-error')){
+          se <- sqrt(diag(solve(-hess))) 
+        }else{
+          se <- rep(0,length(max))
+        }
+        
+        res_table17$convergence_a[i] <- opt_a$convergence
+        res_table17$convergence_b[i] <- opt_b$convergence
+        res_table17$alpha[i] <- alpha[i] 
+        res_table17$theta1[i] <- max[1]
+        res_table17$theta2[i] <- max[2]
+        res_table17$gamma1[i] <- max[3]
+        res_table17$gamma2[i] <- max[4]
+        res_table17$ci_theta1_min[i] <- max[1]-1.96*se[1]
+        res_table17$ci_theta1_max[i] <- max[1]+1.96*se[1]
+        res_table17$ci_theta2_min[i] <- max[2]-1.96*se[2]
+        res_table17$ci_theta2_max[i] <- max[2]+1.96*se[2]
+        res_table17$ci_gamma1_min[i] <- max[3]-1.96*se[3]
+        res_table17$ci_gamma1_max[i] <- max[3]+1.96*se[3]
+        res_table17$ci_gamma2_min[i] <- max[4]-1.96*se[4]
+        res_table17$ci_gamma2_max[i] <- max[4]+1.96*se[4]
+  }
+
+```
+
+
+
+
+## Gompertz(H_alpha) - Loglogistic(t) - Loglogistic(C)
+
+```{r w-l-l}
+ res_table18 <- data.frame(matrix(ncol=length(names[[2]]),nrow=50,
+                                  dimnames=names))
+
+
+  H_alpha<-function(u,alpha){(exp(alpha*u) - 1)/alpha}
+  h_alpha<-function(u,alpha){exp(alpha*u)}
+  H_alpha_inv<-function(u,alpha){(1/alpha)*log(alpha*u+1)}
+  log_h_alpha<-function(u,alpha){alpha * u} 
+  dh_alpha<-function(u,alpha){alpha*exp(alpha*u)}
+  
+  #distribution of t
+  
+  H_T<-function(t,theta){ log(1+(t*theta[1])^{theta[2]})}
+  h_T<-function(t,theta){(theta[2]*theta[1]^{theta[2]}*t^{theta[2]-1})/(1+(t*theta[1])^{theta[2]})}
+  log_h_T<-function(t,theta){log(theta[2]) + theta[2]*log(theta[1]) + (theta[2]-1)*log(t)-log(1+(t*theta[1])^{theta[2]})}
+  dtheta1_H_T<-function(t,theta){(theta[2]*t^{theta[2]}*theta[1]^{theta[2]-1})/(1+(t*theta[1])^{theta[2]})}
+  dtheta2_H_T<-function(t,theta){(log(t*theta[1])*(t*theta[1])^{theta[2]})/(1+(t*theta[1])^{theta[2]})}
+  dtheta1_h_T<-function(t,theta){(theta[2]^{2}*theta[1]^{theta[2]-1}*t^{theta[2]-1})/((1+(t*theta[1])^{theta[2]})^{2})}
+  dtheta2_h_T<-function(t,theta){(theta[1]^{theta[2]}*t^{theta[2]-1}*(1+(theta[1]*t)^{theta[2]}+theta[2]*log(t*theta[1])))/((1+(t*theta[1])^{theta[2]})^{2})}
+  
+  fit_a<-survreg(Surv(times,event)~1,dist = 'loglogistic',data=data_optim)
+  theta1_a<-as.numeric(exp(-fit_a$coefficients)) # exp(-mu)
+  theta2_a<-1/fit_a$scale # 1/sigma 
+  
+  fit_b<-survreg(Surv(times,times/times)~1,dist = 'loglogistic',data=data_optim)
+  theta1_b<-as.numeric(exp(-fit_b$coefficients)) # exp(-mu)
+  theta2_b<-1/fit_b$scale # 1/sigma 
+        
+        
+  #distribution of c
+        
+  H_C<-function(c,gamma){ log(1+(c*gamma[1])^{gamma[2]})}
+  h_C<-function(c,gamma){(gamma[2]*gamma[1]^{gamma[2]}*c^{gamma[2]-1})/(1+(c*gamma[1])^{gamma[2]})}
+  log_h_C<-function(c,gamma){log(gamma[2]) + gamma[2]*log(gamma[1]) + (gamma[2]-1)*log(c)-log(1+(c*gamma[1])^{gamma[2]})}
+  dgamma1_H_C<-function(c,gamma){(gamma[2]*c^{gamma[2]}*gamma[1]^{gamma[2]-1})/(1+(c*gamma[1])^{gamma[2]})}
+  dgamma2_H_C<-function(c,gamma){(log(c*gamma[1])*(c*gamma[1])^{gamma[2]})/(1+(c*gamma[1])^{gamma[2]})}
+  dgamma1_h_C<-function(c,gamma){(gamma[2]^{2}*gamma[1]^{gamma[2]-1}*c^{gamma[2]-1})/((1+(c*gamma[1])^{gamma[2]})^{2})}
+  dgamma2_h_C<-function(c,gamma){(gamma[1]^{gamma[2]}*c^{gamma[2]-1}*(1+(gamma[1]*c)^{gamma[2]}+gamma[2]*log(c*gamma[1])))/((1+(c*gamma[1])^{gamma[2]})^{2})}
+  
+  fit_a<-survreg(Surv(times,event)~1,dist = 'loglogistic',data=data_optim)
+  gamma1_a<-exp(-fit_a$coefficients) 
+  gamma2_a<-1/fit_a$scale # 1/sigma 
+  
+  fit_b<-survreg(Surv(times,times/times)~1,dist = 'loglogistic',data=data_optim)
+  gamma1_b<-exp(-fit_b$coefficients) 
+  gamma2_b<-1/fit_b$scale # 1/sigma  
+  
+  initials_a <- c(theta1_a,theta2_a,gamma1_a,gamma2_a)
+  initials_b <- c(theta1_b,theta2_b,gamma1_b,gamma2_b)
+  
+  for (i in 1:length(alpha)){
+        
+
+       opt_a<-optim(par=initials_a,
+                        fn=loglikelihood2,
+                        gr=grad,
+                        alpha=alpha[i],
+                        H_T=H_T,
+                        H_C=H_C,
+                        H_alpha=H_alpha,
+                        H_alpha_inv=H_alpha_inv,
+                        log_h_alpha=log_h_alpha,
+                        log_h_C=log_h_C,
+                        log_h_T=log_h_T,
+                        h_C=h_C,
+                        h_T=h_T,
+                        h_alpha=h_alpha,
+                        dh_alpha=dh_alpha,
+                        dtheta1_H_T=dtheta1_H_T,
+                        dtheta2_H_T=dtheta2_H_T,
+                        dtheta1_h_T=dtheta1_h_T,
+                        dtheta2_h_T=dtheta2_h_T,
+                        dgamma1_H_C=dgamma1_H_C,
+                        dgamma2_H_C=dgamma2_H_C,
+                        dgamma1_h_C=dgamma1_h_C,
+                        dgamma2_h_C=dgamma2_h_C,
+                        data=data_optim,
+                        method="BFGS",
+                        control=list(fnscale=-1),
+                        hessian=TRUE)
+           
+       opt_b<-optim(par=initials_b,
+                        fn=loglikelihood2,
+                        gr=grad,
+                        alpha=alpha[i],
+                        H_T=H_T,
+                        H_C=H_C,
+                        H_alpha=H_alpha,
+                        H_alpha_inv=H_alpha_inv,
+                        log_h_alpha=log_h_alpha,
+                        log_h_C=log_h_C,
+                        log_h_T=log_h_T,
+                        h_C=h_C,
+                        h_T=h_T,
+                        h_alpha=h_alpha,
+                        dh_alpha=dh_alpha,
+                        dtheta1_H_T=dtheta1_H_T,
+                        dtheta2_H_T=dtheta2_H_T,
+                        dtheta1_h_T=dtheta1_h_T,
+                        dtheta2_h_T=dtheta2_h_T,
+                        dgamma1_H_C=dgamma1_H_C,
+                        dgamma2_H_C=dgamma2_H_C,
+                        dgamma1_h_C=dgamma1_h_C,
+                        dgamma2_h_C=dgamma2_h_C,
+                        data=data_optim,
+                        method="BFGS",
+                        control=list(fnscale=-1),
+                        hessian=TRUE )
+
+         
+        m_c <- max(opt_a$par[1]-opt_b$par[1],opt_a$par[2]-opt_b$par[2],opt_a$par[3]-opt_b$par[3],opt_a$par[4]-opt_b$par[4])
+        
+          if(abs(m_c) < tol){
+            max <- opt_a$par
+            hess <- opt_a$hessian
+        }else{
+          if(opt_b$value > opt_a$value){
+            max <- opt_b$par
+            hess <- opt_b$hessian
+          }else{
+            max <- opt_a$par
+            hess <- opt_a$hessian
+          }}
+
+        nas <- sum(is.na(hess))
+        inv_hess <- try(solve(-hess))
+        if((!is.na(nas)) & (class(inv_hess)!='try-error')){
+          se <- sqrt(diag(solve(-hess))) 
+        }else{
+          se <- rep(0,length(max))
+        }
+        
+        res_table18$convergence_a[i] <- opt_a$convergence
+        res_table18$convergence_b[i] <- opt_b$convergence
+        res_table18$alpha[i] <- alpha[i] 
+        res_table18$theta1[i] <- max[1]
+        res_table18$theta2[i] <- max[2]
+        res_table18$gamma1[i] <- max[3]
+        res_table18$gamma2[i] <- max[4]
+        res_table18$ci_theta1_min[i] <- max[1]-1.96*se[1]
+        res_table18$ci_theta1_max[i] <- max[1]+1.96*se[1]
+        res_table18$ci_theta2_min[i] <- max[2]-1.96*se[2]
+        res_table18$ci_theta2_max[i] <- max[2]+1.96*se[2]
+        res_table18$ci_gamma1_min[i] <- max[3]-1.96*se[3]
+        res_table18$ci_gamma1_max[i] <- max[3]+1.96*se[3]
+        res_table18$ci_gamma2_min[i] <- max[4]-1.96*se[4]
+        res_table18$ci_gamma2_max[i] <- max[4]+1.96*se[4]
+  }
+
+```
+
+
+
+# Loglogistic H_alpha
+
+```{r}
+alpha <- seq(from=0.05, to=10, length.out = 50)
+```
+
+
+## Loglogistic(H_alpha) - Weibull(t) - Weibull (c)
+
+```{r g-w-w}
+res_table19 <- data.frame(matrix(ncol=length(names[[2]]),nrow=50,
+                                  dimnames=names))
+
+
+  H_alpha<-function(u,alpha){log(1+alpha*u)/alpha}
+  h_alpha<-function(u,alpha){1/(1+alpha*u)}
+  H_alpha_inv<-function(u,alpha){(1/alpha)*(exp(alpha*u)-1)} 
+  log_h_alpha<-function(u,alpha){- log(alpha*u+1)}
+  dh_alpha<-function(u,alpha){-alpha/(1+alpha*u)^{2}}
+  
+  #distribution of t
+  
+  H_T<-function(t,theta){ (t*theta[1])^theta[2]}
+  h_T <-function(t,theta){theta[2]*theta[1]^{theta[2]}*t^{theta[2]-1}}
+  log_h_T<-function(t,theta){log(theta[2]) + theta[2]*log(theta[1]) + (theta[2]-1)*log(t)}
+  dtheta1_H_T<-function(t,theta){theta[2]*t^{theta[2]}*theta[1]^{theta[2]-1}}
+  dtheta2_H_T<-function(t,theta){(t*theta[1])^{theta[2]}*log(t*theta[1])}
+  dtheta1_h_T<-function(t,theta){theta[2]^{2}*(theta[1]*t)^{theta[2]-1}}
+  dtheta2_h_T<-function(t,theta){theta[1]^{theta[2]}*t^{theta[2]-1}+theta[2]*theta[1]^{theta[2]}*t^{theta[2]-1}*(log(theta[1])+log(t))}
+  
+  fit_a<-survreg(Surv(times,event)~1,dist = 'weibull',data=data_optim)
+  theta1_a<-as.numeric(exp(-fit_a$coefficients)) # exp(-mu)
+  theta2_a<-1/fit_a$scale # 1/sigma 
+  
+  fit_b<-survreg(Surv(times,times/times)~1,dist = 'weibull',data=data_optim)
+  theta1_b<-as.numeric(exp(-fit_b$coefficients)) # exp(-mu)
+  theta2_b<-1/fit_b$scale # 1/sigma 
+  
+  
+  #distribution of c
+  
+  H_C<-function(c,gamma){ (c*gamma[1])^gamma[2]}
+  h_C <-function(c,gamma){gamma[2]*gamma[1]^{gamma[2]}*c^{gamma[2]-1}}
+  log_h_C<-function(c,gamma){log(gamma[2]) + gamma[2]*log(gamma[1]) + (gamma[2]-1)*log(c)}
+  dgamma1_H_C<-function(c,gamma){gamma[2]*c^{gamma[2]}*gamma[1]^{gamma[2]-1}}
+  dgamma2_H_C<-function(c,gamma){(c*gamma[1])^{gamma[2]}*log(c*gamma[1])}
+  dgamma1_h_C<-function(c,gamma){gamma[2]^{2}*(gamma[1]*c)^{gamma[2]-1}}
+  dgamma2_h_C<-function(c,gamma){gamma[1]^{gamma[2]}*c^{gamma[2]-1}+gamma[2]*gamma[1]^{gamma[2]}*c^{gamma[2]-1}*(log(gamma[1])+log(c))}
+  
+  
+  fit_a<-survreg(Surv(times,event)~1,dist = 'weibull',data=data_optim)
+  gamma1_a<-as.numeric(exp(-fit_a$coefficients)) # exp(-mu)
+  gamma2_a<-1/fit_a$scale # 1/sigma 
+  
+  fit_b<-survreg(Surv(times,times/times)~1,dist = 'weibull',data=data_optim)
+  gamma1_b<-as.numeric(exp(-fit_b$coefficients)) # exp(-mu)
+  gamma2_b<-1/fit_b$scale # 1/sigma 
+  
+  initials_a <- c(theta1_a,theta2_a,gamma1_a,gamma2_a)
+  initials_b <- c(theta1_b,theta2_b,gamma1_b,gamma2_b)
+  
+  
+  
+  for (i in 1:length(alpha)){
+      
+       opt_a<-optim(par=initials_a,
+                    fn=loglikelihood2,
+                    gr=grad,
+                    alpha=alpha[i],
+                    H_T=H_T,
+                    H_C=H_C,
+                    H_alpha=H_alpha,
+                    H_alpha_inv=H_alpha_inv,
+                    log_h_alpha=log_h_alpha,
+                    log_h_C=log_h_C,
+                    log_h_T=log_h_T,
+                    h_C=h_C,
+                    h_T=h_T,
+                    h_alpha=h_alpha,
+                    dh_alpha=dh_alpha,
+                    dtheta1_H_T=dtheta1_H_T,
+                    dtheta2_H_T=dtheta2_H_T,
+                    dtheta1_h_T=dtheta1_h_T,
+                    dtheta2_h_T=dtheta2_h_T,
+                    dgamma1_H_C=dgamma1_H_C,
+                    dgamma2_H_C=dgamma2_H_C,
+                    dgamma1_h_C=dgamma1_h_C,
+                    dgamma2_h_C=dgamma2_h_C,
+                    data=data_optim,
+                    method="BFGS",
+                    control=list(fnscale=-1),
+                    hessian=TRUE)
+       
+           
+       opt_b<-optim(par=initials_b,
+                    fn=loglikelihood2,
+                    gr=grad,
+                    alpha=alpha[i],
+                    H_T=H_T,
+                    H_C=H_C,
+                    H_alpha=H_alpha,
+                    H_alpha_inv=H_alpha_inv,
+                    log_h_alpha=log_h_alpha,
+                    log_h_C=log_h_C,
+                    log_h_T=log_h_T,
+                    h_C=h_C,
+                    h_T=h_T,
+                    h_alpha=h_alpha,
+                    dh_alpha=dh_alpha,
+                    dtheta1_H_T=dtheta1_H_T,
+                    dtheta2_H_T=dtheta2_H_T,
+                    dtheta1_h_T=dtheta1_h_T,
+                    dtheta2_h_T=dtheta2_h_T,
+                    dgamma1_H_C=dgamma1_H_C,
+                    dgamma2_H_C=dgamma2_H_C,
+                    dgamma1_h_C=dgamma1_h_C,
+                    dgamma2_h_C=dgamma2_h_C,
+                    data=data_optim,
+                    method="BFGS",
+                    control=list(fnscale=-1),
+                    hessian=TRUE )
+
+       
+        m_c <- max(opt_a$par[1]-opt_b$par[1],opt_a$par[2]-opt_b$par[2],opt_a$par[3]-opt_b$par[3],opt_a$par[4]-opt_b$par[4])
+
+        
+          if(abs(m_c) < tol){ ## change
+            max <- opt_a$par
+            hess <- opt_a$hessian
+        }else{
+          if(opt_b$value > opt_a$value){
+            max <- opt_b$par
+            hess <- opt_b$hessian
+          }else{
+            max <- opt_a$par
+            hess <- opt_a$hessian
+          }}
+        
+        
+        nas <- sum(is.na(hess))
+        inv_hess <- try(solve(-hess))
+        if((!is.na(nas)) & (class(inv_hess)!='try-error')){
+          se <- sqrt(diag(solve(-hess))) 
+        }else{
+          se <- rep(0,length(max))
+        }
+        
+
+        res_table19$convergence_a[i] <- opt_a$convergence
+        res_table19$convergence_b[i] <- opt_b$convergence
+        res_table19$alpha[i] <- alpha[i] 
+        res_table19$theta1[i] <- max[1]
+        res_table19$theta2[i] <- max[2]
+        res_table19$gamma1[i] <- max[3]
+        res_table19$gamma2[i] <- max[4]
+        res_table19$ci_theta1_min[i] <- max[1]-1.96*se[1]
+        res_table19$ci_theta1_max[i] <- max[1]+1.96*se[1]
+        res_table19$ci_theta2_min[i] <- max[2]-1.96*se[2]
+        res_table19$ci_theta2_max[i] <- max[2]+1.96*se[2]
+        res_table19$ci_gamma1_min[i] <- max[3]-1.96*se[3]
+        res_table19$ci_gamma1_max[i] <- max[3]+1.96*se[3]
+        res_table19$ci_gamma2_min[i] <- max[4]-1.96*se[4]
+        res_table19$ci_gamma2_max[i] <- max[4]+1.96*se[4]
+      }     
+
+```
+
+
+
+## Loglogistic(H_alpha) - Weibull(t) - Gompertz (c)
+
+```{r w-w-g}
+ res_table20 <- data.frame(matrix(ncol=length(names[[2]]),nrow=50,
+                                  dimnames=names))
+
+
+  H_alpha<-function(u,alpha){log(1+alpha*u)/alpha}
+  h_alpha<-function(u,alpha){1/(1+alpha*u)}
+  H_alpha_inv<-function(u,alpha){(1/alpha)*(exp(alpha*u)-1)} 
+  log_h_alpha<-function(u,alpha){- log(alpha*u+1)}
+  dh_alpha<-function(u,alpha){-alpha/(1+alpha*u)^{2}}
+  
+  #distribution of t
+  
+  H_T<-function(t,theta){ (t*theta[1])^theta[2]}
+  h_T <-function(t,theta){theta[2]*theta[1]^{theta[2]}*t^{theta[2]-1}}
+  log_h_T<-function(t,theta){log(theta[2]) + theta[2]*log(theta[1]) + (theta[2]-1)*log(t)}
+  dtheta1_H_T<-function(t,theta){theta[2]*t^{theta[2]}*theta[1]^{theta[2]-1}}
+  dtheta2_H_T<-function(t,theta){(t*theta[1])^{theta[2]}*log(t*theta[1])}
+  dtheta1_h_T<-function(t,theta){theta[2]^{2}*(theta[1]*t)^{theta[2]-1}}
+  dtheta2_h_T<-function(t,theta){theta[1]^{theta[2]}*t^{theta[2]-1}+theta[2]*theta[1]^{theta[2]}*t^{theta[2]-1}*(log(theta[1])+log(t))}
+  
+  fit_a<-survreg(Surv(times,event)~1,dist = 'weibull',data=data_optim)
+  theta1_a<-as.numeric(exp(-fit_a$coefficients)) # exp(-mu)
+  theta2_a<-1/fit_a$scale # 1/sigma 
+  
+  fit_b<-survreg(Surv(times,times/times)~1,dist = 'weibull',data=data_optim)
+  theta1_b<-as.numeric(exp(-fit_b$coefficients)) # exp(-mu)
+  theta2_b<-1/fit_b$scale # 1/sigma 
+  
+  H_C<-function(c,gamma){ exp((c*gamma[1])^gamma[2])-1}
+  h_C<-function(c,gamma){gamma[2]*gamma[1]^{gamma[2]}* exp((c*gamma[1])^gamma[2])*c^{gamma[2]-1}}
+  log_h_C<-function(c,gamma){log(gamma[2]) + gamma[2]*log(gamma[1]) + (c*gamma[1])^gamma[2] + (gamma[2]-1)*log(c)}
+  dgamma1_H_C<-function(c,gamma){gamma[2]*exp((c*gamma[1])^gamma[2])*c^{gamma[2]}*gamma[1]^{gamma[2]-1}}
+  dgamma2_H_C<-function(c,gamma){exp((c*gamma[1])^gamma[2])*log(c*gamma[1])*(c*gamma[1])^{gamma[2]}}
+  dgamma1_h_C<-function(c,gamma){gamma[2]^{2}*c^{gamma[2]-1}*exp((c*gamma[1])^gamma[2])*(c^{gamma[2]}*gamma[1]^{2*gamma[2]-1}+gamma[1]^{gamma[2]-1})}
+  dgamma2_h_C<-function(c,gamma){exp((c*gamma[1])^gamma[2])*c^{gamma[2]-1}*gamma[1]^{gamma[2]}+gamma[2]*(
+      exp((c*gamma[1])^gamma[2])*gamma[1]^{gamma[2]}*c^{gamma[2]-1}*log(gamma[1])+gamma[1]^{gamma[2]}*(exp((c*gamma[1])^gamma[2])*gamma[1]^{gamma[2]}*c^{2*gamma[2]-1}*log(c*gamma[1])+exp((c*gamma[1])^gamma[2])*c^{gamma[2]-1}*log(c)))}
+  
+  fit_a<-flexsurvreg(Surv(times,event)~1,dist = custom.gompt,data=data_optim)
+  gamma1_a<-exp(fit_a$coefficients[1]) # exp(coeff[1])
+  gamma2_a<-exp(fit_a$coefficients[2]) # exp(coeff[2])
+  
+  fit_b<-flexsurvreg(Surv(times,times/times)~1,dist = custom.gompt,data=data_optim)
+  gamma1_b<-exp(fit_b$coefficients[1]) # exp(coeff[1]) 
+  gamma2_b<-exp(fit_b$coefficients[2]) # exp(coeff[2])
+  
+  initials_a <- c(theta1_a,theta2_a,gamma1_a,gamma2_a)
+  initials_b <- c(theta1_b,theta2_b,gamma1_b,gamma2_b)
+  
+  for (i in 1:length(alpha)){
+      
+       opt_a<-optim(par=initials_a,
+                    fn=loglikelihood2,
+                    gr=grad,
+                    alpha=alpha[i],
+                    H_T=H_T,
+                    H_C=H_C,
+                    H_alpha=H_alpha,
+                    H_alpha_inv=H_alpha_inv,
+                    log_h_alpha=log_h_alpha,
+                    log_h_C=log_h_C,
+                    log_h_T=log_h_T,
+                    h_C=h_C,
+                    h_T=h_T,
+                    h_alpha=h_alpha,
+                    dh_alpha=dh_alpha,
+                    dtheta1_H_T=dtheta1_H_T,
+                    dtheta2_H_T=dtheta2_H_T,
+                    dtheta1_h_T=dtheta1_h_T,
+                    dtheta2_h_T=dtheta2_h_T,
+                    dgamma1_H_C=dgamma1_H_C,
+                    dgamma2_H_C=dgamma2_H_C,
+                    dgamma1_h_C=dgamma1_h_C,
+                    dgamma2_h_C=dgamma2_h_C,
+                    data=data_optim,
+                    method="BFGS",
+                    control=list(fnscale=-1),
+                    hessian=TRUE)
+       
+           
+       opt_b<-optim(par=initials_b,
+                    fn=loglikelihood2,
+                    gr=grad,
+                    alpha=alpha[i],
+                    H_T=H_T,
+                    H_C=H_C,
+                    H_alpha=H_alpha,
+                    H_alpha_inv=H_alpha_inv,
+                    log_h_alpha=log_h_alpha,
+                    log_h_C=log_h_C,
+                    log_h_T=log_h_T,
+                    h_C=h_C,
+                    h_T=h_T,
+                    h_alpha=h_alpha,
+                    dh_alpha=dh_alpha,
+                    dtheta1_H_T=dtheta1_H_T,
+                    dtheta2_H_T=dtheta2_H_T,
+                    dtheta1_h_T=dtheta1_h_T,
+                    dtheta2_h_T=dtheta2_h_T,
+                    dgamma1_H_C=dgamma1_H_C,
+                    dgamma2_H_C=dgamma2_H_C,
+                    dgamma1_h_C=dgamma1_h_C,
+                    dgamma2_h_C=dgamma2_h_C,
+                    data=data_optim,
+                    method="BFGS",
+                    control=list(fnscale=-1),
+                    hessian=TRUE )
+
+       
+        m_c <- max(opt_a$par[1]-opt_b$par[1],opt_a$par[2]-opt_b$par[2],opt_a$par[3]-opt_b$par[3],opt_a$par[4]-opt_b$par[4])
+
+        
+          if(abs(m_c) < tol){ ## change
+            max <- opt_a$par
+            hess <- opt_a$hessian
+        }else{
+          if(opt_b$value > opt_a$value){
+            max <- opt_b$par
+            hess <- opt_b$hessian
+          }else{
+            max <- opt_a$par
+            hess <- opt_a$hessian
+          }}
+        
+        nas <- sum(is.na(hess))
+        inv_hess <- try(solve(-hess))
+        if((!is.na(nas)) & (class(inv_hess)!='try-error')){
+          se <- sqrt(diag(solve(-hess))) 
+        }else{
+          se <- rep(0,length(max))
+        } 
+        
+        res_table20$convergence_a[i] <- opt_a$convergence
+        res_table20$convergence_b[i] <- opt_b$convergence
+        res_table20$alpha[i] <- alpha[i] 
+        res_table20$theta1[i] <- max[1]
+        res_table20$theta2[i] <- max[2]
+        res_table20$gamma1[i] <- max[3]
+        res_table20$gamma2[i] <- max[4]
+        res_table20$ci_theta1_min[i] <- max[1]-1.96*se[1]
+        res_table20$ci_theta1_max[i] <- max[1]+1.96*se[1]
+        res_table20$ci_theta2_min[i] <- max[2]-1.96*se[2]
+        res_table20$ci_theta2_max[i] <- max[2]+1.96*se[2]
+        res_table20$ci_gamma1_min[i] <- max[3]-1.96*se[3]
+        res_table20$ci_gamma1_max[i] <- max[3]+1.96*se[3]
+        res_table20$ci_gamma2_min[i] <- max[4]-1.96*se[4]
+        res_table20$ci_gamma2_max[i] <- max[4]+1.96*se[4]
+  }
+
+```
+
+
+## Loglogistic(H_alpha) - Weibull(t) - Loglogistic(c)
+
+```{r w-w-l}
+ res_table21 <- data.frame(matrix(ncol=length(names[[2]]),nrow=50,
+                                  dimnames=names))
+
+
+  H_alpha<-function(u,alpha){log(1+alpha*u)/alpha}
+  h_alpha<-function(u,alpha){1/(1+alpha*u)}
+  H_alpha_inv<-function(u,alpha){(1/alpha)*(exp(alpha*u)-1)} 
+  log_h_alpha<-function(u,alpha){- log(alpha*u+1)}
+  dh_alpha<-function(u,alpha){-alpha/(1+alpha*u)^{2}}
+  
+  #distribution of t
+  
+  H_T<-function(t,theta){ (t*theta[1])^theta[2]}
+  h_T <-function(t,theta){theta[2]*theta[1]^{theta[2]}*t^{theta[2]-1}}
+  log_h_T<-function(t,theta){log(theta[2]) + theta[2]*log(theta[1]) + (theta[2]-1)*log(t)}
+  dtheta1_H_T<-function(t,theta){theta[2]*t^{theta[2]}*theta[1]^{theta[2]-1}}
+  dtheta2_H_T<-function(t,theta){(t*theta[1])^{theta[2]}*log(t*theta[1])}
+  dtheta1_h_T<-function(t,theta){theta[2]^{2}*(theta[1]*t)^{theta[2]-1}}
+  dtheta2_h_T<-function(t,theta){theta[1]^{theta[2]}*t^{theta[2]-1}+theta[2]*theta[1]^{theta[2]}*t^{theta[2]-1}*(log(theta[1])+log(t))}
+  
+  fit_a<-survreg(Surv(times,event)~1,dist = 'weibull',data=data_optim)
+  theta1_a<-as.numeric(exp(-fit_a$coefficients)) # exp(-mu)
+  theta2_a<-1/fit_a$scale # 1/sigma 
+  
+  fit_b<-survreg(Surv(times,times/times)~1,dist = 'weibull',data=data_optim)
+  theta1_b<-as.numeric(exp(-fit_b$coefficients)) # exp(-mu)
+  theta2_b<-1/fit_b$scale # 1/sigma 
+  
+  H_C<-function(c,gamma){ log(1+(c*gamma[1])^{gamma[2]})}
+  h_C<-function(c,gamma){(gamma[2]*gamma[1]^{gamma[2]}*c^{gamma[2]-1})/(1+(c*gamma[1])^{gamma[2]})}
+  log_h_C<-function(c,gamma){log(gamma[2]) + gamma[2]*log(gamma[1]) + (gamma[2]-1)*log(c)-log(1+(c*gamma[1])^{gamma[2]})}
+  dgamma1_H_C<-function(c,gamma){(gamma[2]*c^{gamma[2]}*gamma[1]^{gamma[2]-1})/(1+(c*gamma[1])^{gamma[2]})}
+  dgamma2_H_C<-function(c,gamma){(log(c*gamma[1])*(c*gamma[1])^{gamma[2]})/(1+(c*gamma[1])^{gamma[2]})}
+  dgamma1_h_C<-function(c,gamma){(gamma[2]^{2}*gamma[1]^{gamma[2]-1}*c^{gamma[2]-1})/((1+(c*gamma[1])^{gamma[2]})^{2})}
+  dgamma2_h_C<-function(c,gamma){(gamma[1]^{gamma[2]}*c^{gamma[2]-1}*(1+(gamma[1]*c)^{gamma[2]}+gamma[2]*log(c*gamma[1])))/((1+(c*gamma[1])^{gamma[2]})^{2})}
+  
+  fit_a<-survreg(Surv(times,event)~1,dist = 'loglogistic',data=data_optim)
+  gamma1_a<-exp(-fit_a$coefficients) 
+  gamma2_a<-1/fit_a$scale # 1/sigma 
+  
+  fit_b<-survreg(Surv(times,times/times)~1,dist = 'loglogistic',data=data_optim)
+  gamma1_b<-exp(-fit_b$coefficients) 
+  gamma2_b<-1/fit_b$scale # 1/sigma     
+  
+  initials_a <- c(theta1_a,theta2_a,gamma1_a,gamma2_a)
+  initials_b <- c(theta1_b,theta2_b,gamma1_b,gamma2_b)
+  
+  for (i in 1:length(alpha)){
+
+       opt_a<-optim(par=initials_a,
+                        fn=loglikelihood2,
+                        gr=grad,
+                        alpha=alpha[i],
+                        H_T=H_T,
+                        H_C=H_C,
+                        H_alpha=H_alpha,
+                        H_alpha_inv=H_alpha_inv,
+                        log_h_alpha=log_h_alpha,
+                        log_h_C=log_h_C,
+                        log_h_T=log_h_T,
+                        h_C=h_C,
+                        h_T=h_T,
+                        h_alpha=h_alpha,
+                        dh_alpha=dh_alpha,
+                        dtheta1_H_T=dtheta1_H_T,
+                        dtheta2_H_T=dtheta2_H_T,
+                        dtheta1_h_T=dtheta1_h_T,
+                        dtheta2_h_T=dtheta2_h_T,
+                        dgamma1_H_C=dgamma1_H_C,
+                        dgamma2_H_C=dgamma2_H_C,
+                        dgamma1_h_C=dgamma1_h_C,
+                        dgamma2_h_C=dgamma2_h_C,
+                        data=data_optim,
+                        method="BFGS",
+                        control=list(fnscale=-1),
+                        hessian=TRUE)
+           
+       opt_b<-optim(par=initials_b,
+                        fn=loglikelihood2,
+                        gr=grad,
+                        alpha=alpha[i],
+                        H_T=H_T,
+                        H_C=H_C,
+                        H_alpha=H_alpha,
+                        H_alpha_inv=H_alpha_inv,
+                        log_h_alpha=log_h_alpha,
+                        log_h_C=log_h_C,
+                        log_h_T=log_h_T,
+                        h_C=h_C,
+                        h_T=h_T,
+                        h_alpha=h_alpha,
+                        dh_alpha=dh_alpha,
+                        dtheta1_H_T=dtheta1_H_T,
+                        dtheta2_H_T=dtheta2_H_T,
+                        dtheta1_h_T=dtheta1_h_T,
+                        dtheta2_h_T=dtheta2_h_T,
+                        dgamma1_H_C=dgamma1_H_C,
+                        dgamma2_H_C=dgamma2_H_C,
+                        dgamma1_h_C=dgamma1_h_C,
+                        dgamma2_h_C=dgamma2_h_C,
+                        data=data_optim,
+                        method="BFGS",
+                        control=list(fnscale=-1),
+                        hessian=TRUE )
+
+         
+        m_c <- max(opt_a$par[1]-opt_b$par[1],opt_a$par[2]-opt_b$par[2],opt_a$par[3]-opt_b$par[3],opt_a$par[4]-opt_b$par[4])
+        
+        if(abs(m_c) < tol){ ## change
+            max <- opt_a$par
+            hess <- opt_a$hessian
+        }else{
+          if(opt_b$value > opt_a$value){
+            max <- opt_b$par
+            hess <- opt_b$hessian
+          }else{
+            max <- opt_a$par
+            hess <- opt_a$hessian
+          }}
+
+        nas <- sum(is.na(hess))
+        inv_hess <- try(solve(-hess))
+        if((!is.na(nas)) & (class(inv_hess)!='try-error')){
+          se <- sqrt(diag(solve(-hess))) 
+        }else{
+          se <- rep(0,length(max))
+        }
+        
+        res_table21$convergence_a[i] <- opt_a$convergence
+        res_table21$convergence_b[i] <- opt_b$convergence
+        res_table21$alpha[i] <- alpha[i] 
+        res_table21$theta1[i] <- max[1]
+        res_table21$theta2[i] <- max[2]
+        res_table21$gamma1[i] <- max[3]
+        res_table21$gamma2[i] <- max[4]
+        res_table21$ci_theta1_min[i] <- max[1]-1.96*se[1]
+        res_table21$ci_theta1_max[i] <- max[1]+1.96*se[1]
+        res_table21$ci_theta2_min[i] <- max[2]-1.96*se[2]
+        res_table21$ci_theta2_max[i] <- max[2]+1.96*se[2]
+        res_table21$ci_gamma1_min[i] <- max[3]-1.96*se[3]
+        res_table21$ci_gamma1_max[i] <- max[3]+1.96*se[3]
+        res_table21$ci_gamma2_min[i] <- max[4]-1.96*se[4]
+        res_table21$ci_gamma2_max[i] <- max[4]+1.96*se[4]
+  }
+
+```
+
+
+
+## Loglogistic(H_alpha) - Gompertz(t) - Weibull (c)
+
+```{r g-g-w}
+ res_table22 <- data.frame(matrix(ncol=length(names[[2]]),nrow=50,
+                                  dimnames=names))
+
+
+  H_alpha<-function(u,alpha){log(1+alpha*u)/alpha}
+  h_alpha<-function(u,alpha){1/(1+alpha*u)}
+  H_alpha_inv<-function(u,alpha){(1/alpha)*(exp(alpha*u)-1)} 
+  log_h_alpha<-function(u,alpha){- log(alpha*u+1)}
+  dh_alpha<-function(u,alpha){-alpha/(1+alpha*u)^{2}}
+  
+  #distribution of t
+  
+  H_T<-function(t,theta){ exp((t*theta[1])^theta[2])-1}
+  h_T<-function(t,theta){theta[2]*theta[1]^{theta[2]}* exp((t*theta[1])^theta[2])*t^{theta[2]-1}}
+  log_h_T<-function(t,theta){log(theta[2]) + theta[2]*log(theta[1]) + (t*theta[1])^theta[2] + (theta[2]-1)*log(t)}
+  dtheta1_H_T<-function(t,theta){theta[2]*exp((t*theta[1])^theta[2])*t^{theta[2]}*theta[1]^{theta[2]-1}}
+  dtheta2_H_T<-function(t,theta){exp((t*theta[1])^theta[2])*log(t*theta[1])*(t*theta[1])^{theta[2]}}
+  dtheta1_h_T<-function(t,theta){theta[2]^{2}*t^{theta[2]-1}*exp((t*theta[1])^theta[2])*(t^{theta[2]}*theta[1]^{2*theta[2]-1}+theta[1]^{theta[2]-1})}
+  dtheta2_h_T<-function(t,theta){exp((t*theta[1])^theta[2])*t^{theta[2]-1}*theta[1]^{theta[2]}+theta[2]*(
+      exp((t*theta[1])^theta[2])*theta[1]^{theta[2]}*t^{theta[2]-1}*log(theta[1])+theta[1]^{theta[2]}*(exp((t*theta[1])^theta[2])*theta[1]^{theta[2]}*t^{2*theta[2]-1}*log(t*theta[1])+exp((t*theta[1])^theta[2])*t^{theta[2]-1}*log(t)))}
+  
+  fit_a<-flexsurvreg(Surv(times,event)~1,dist = custom.gompt,data=data_optim)
+  theta1_a<-exp(fit_a$coefficients[1]) # exp(coeff[1])
+  theta2_a<-exp(fit_a$coefficients[2]) # exp(coeff[2])
+  
+  fit_b<-flexsurvreg(Surv(times,times/times)~1,dist = custom.gompt,data=data_optim)
+  theta1_b<-exp(fit_b$coefficients[1]) # exp(coeff[1])
+  theta2_b<-exp(fit_b$coefficients[2]) # exp(coeff[2])
+  
+  H_C<-function(c,gamma){ (c*gamma[1])^gamma[2]}
+  h_C <-function(c,gamma){gamma[2]*gamma[1]^{gamma[2]}*c^{gamma[2]-1}}
+  log_h_C<-function(c,gamma){log(gamma[2]) + gamma[2]*log(gamma[1]) + (gamma[2]-1)*log(c)}
+  dgamma1_H_C<-function(c,gamma){gamma[2]*c^{gamma[2]}*gamma[1]^{gamma[2]-1}}
+  dgamma2_H_C<-function(c,gamma){(c*gamma[1])^{gamma[2]}*log(c*gamma[1])}
+  dgamma1_h_C<-function(c,gamma){gamma[2]^{2}*(gamma[1]*c)^{gamma[2]-1}}
+  dgamma2_h_C<-function(c,gamma){gamma[1]^{gamma[2]}*c^{gamma[2]-1}+gamma[2]*gamma[1]^{gamma[2]}*c^{gamma[2]-1}*(log(gamma[1])+log(c))}
+  
+  
+  fit_a<-survreg(Surv(times,event)~1,dist = 'weibull',data=data_optim)
+  gamma1_a<-as.numeric(exp(-fit_a$coefficients)) # exp(-mu)
+  gamma2_a<-1/fit_a$scale # 1/sigma 
+  
+  fit_b<-survreg(Surv(times,times/times)~1,dist = 'weibull',data=data_optim)
+  gamma1_b<-as.numeric(exp(-fit_b$coefficients)) # exp(-mu)
+  gamma2_b<-1/fit_b$scale # 1/sigma 
+  
+  initials_a <- c(theta1_a,theta2_a,gamma1_a,gamma2_a)
+  initials_b <- c(theta1_b,theta2_b,gamma1_b,gamma2_b)
+  
+  for (i in 1:length(alpha)){
+        
+
+       opt_a<-optim(par=initials_a,
+                        fn=loglikelihood2,
+                        gr=grad,
+                        alpha=alpha[i],
+                        H_T=H_T,
+                        H_C=H_C,
+                        H_alpha=H_alpha,
+                        H_alpha_inv=H_alpha_inv,
+                        log_h_alpha=log_h_alpha,
+                        log_h_C=log_h_C,
+                        log_h_T=log_h_T,
+                        h_C=h_C,
+                        h_T=h_T,
+                        h_alpha=h_alpha,
+                        dh_alpha=dh_alpha,
+                        dtheta1_H_T=dtheta1_H_T,
+                        dtheta2_H_T=dtheta2_H_T,
+                        dtheta1_h_T=dtheta1_h_T,
+                        dtheta2_h_T=dtheta2_h_T,
+                        dgamma1_H_C=dgamma1_H_C,
+                        dgamma2_H_C=dgamma2_H_C,
+                        dgamma1_h_C=dgamma1_h_C,
+                        dgamma2_h_C=dgamma2_h_C,
+                        data=data_optim,
+                        method="BFGS",
+                        control=list(fnscale=-1),
+                        hessian=TRUE)
+           
+       opt_b<-optim(par=initials_b,
+                        fn=loglikelihood2,
+                        gr=grad,
+                        alpha=alpha[i],
+                        H_T=H_T,
+                        H_C=H_C,
+                        H_alpha=H_alpha,
+                        H_alpha_inv=H_alpha_inv,
+                        log_h_alpha=log_h_alpha,
+                        log_h_C=log_h_C,
+                        log_h_T=log_h_T,
+                        h_C=h_C,
+                        h_T=h_T,
+                        h_alpha=h_alpha,
+                        dh_alpha=dh_alpha,
+                        dtheta1_H_T=dtheta1_H_T,
+                        dtheta2_H_T=dtheta2_H_T,
+                        dtheta1_h_T=dtheta1_h_T,
+                        dtheta2_h_T=dtheta2_h_T,
+                        dgamma1_H_C=dgamma1_H_C,
+                        dgamma2_H_C=dgamma2_H_C,
+                        dgamma1_h_C=dgamma1_h_C,
+                        dgamma2_h_C=dgamma2_h_C,
+                        data=data_optim,
+                        method="BFGS",
+                        control=list(fnscale=-1),
+                        hessian=TRUE )
+
+         
+        m_c <- max(opt_a$par[1]-opt_b$par[1],opt_a$par[2]-opt_b$par[2],opt_a$par[3]-opt_b$par[3],opt_a$par[4]-opt_b$par[4])
+        
+          if(abs(m_c) < tol){
+            max <- opt_a$par
+            hess <- opt_a$hessian
+        }else{
+          if(opt_b$value > opt_a$value){
+            max <- opt_b$par
+            hess <- opt_b$hessian
+          }else{
+            max <- opt_a$par
+            hess <- opt_a$hessian
+          }}
+
+        nas <- sum(is.na(hess))
+        inv_hess <- try(solve(-hess))
+        if((!is.na(nas)) & (class(inv_hess)!='try-error')){
+          se <- sqrt(diag(solve(-hess))) 
+        }else{
+          se <- rep(0,length(max))
+        }
+        
+        res_table22$convergence_a[i] <- opt_a$convergence
+        res_table22$convergence_b[i] <- opt_b$convergence
+        res_table22$alpha[i] <- alpha[i] 
+        res_table22$theta1[i] <- max[1]
+        res_table22$theta2[i] <- max[2]
+        res_table22$gamma1[i] <- max[3]
+        res_table22$gamma2[i] <- max[4]
+        res_table22$ci_theta1_min[i] <- max[1]-1.96*se[1]
+        res_table22$ci_theta1_max[i] <- max[1]+1.96*se[1]
+        res_table22$ci_theta2_min[i] <- max[2]-1.96*se[2]
+        res_table22$ci_theta2_max[i] <- max[2]+1.96*se[2]
+        res_table22$ci_gamma1_min[i] <- max[3]-1.96*se[3]
+        res_table22$ci_gamma1_max[i] <- max[3]+1.96*se[3]
+        res_table22$ci_gamma2_min[i] <- max[4]-1.96*se[4]
+        res_table22$ci_gamma2_max[i] <- max[4]+1.96*se[4]
+  }
+
+```
+
+
+## Loglogistic(H_alpha) - Gompertz(t) - Gompertz (c)
+
+```{r l-g-g}
+ res_table23 <- data.frame(matrix(ncol=length(names[[2]]),nrow=50,
+                                  dimnames=names))
+
+
+  H_alpha<-function(u,alpha){log(1+alpha*u)/alpha}
+  h_alpha<-function(u,alpha){1/(1+alpha*u)}
+  H_alpha_inv<-function(u,alpha){(1/alpha)*(exp(alpha*u)-1)} 
+  log_h_alpha<-function(u,alpha){- log(alpha*u+1)}
+  dh_alpha<-function(u,alpha){-alpha/(1+alpha*u)^{2}}
+  
+  #distribution of t
+  
+  H_T<-function(t,theta){ exp((t*theta[1])^theta[2])-1}
+  h_T<-function(t,theta){theta[2]*theta[1]^{theta[2]}* exp((t*theta[1])^theta[2])*t^{theta[2]-1}}
+  log_h_T<-function(t,theta){log(theta[2]) + theta[2]*log(theta[1]) + (t*theta[1])^theta[2] + (theta[2]-1)*log(t)}
+  dtheta1_H_T<-function(t,theta){theta[2]*exp((t*theta[1])^theta[2])*t^{theta[2]}*theta[1]^{theta[2]-1}}
+  dtheta2_H_T<-function(t,theta){exp((t*theta[1])^theta[2])*log(t*theta[1])*(t*theta[1])^{theta[2]}}
+  dtheta1_h_T<-function(t,theta){theta[2]^{2}*t^{theta[2]-1}*exp((t*theta[1])^theta[2])*(t^{theta[2]}*theta[1]^{2*theta[2]-1}+theta[1]^{theta[2]-1})}
+  dtheta2_h_T<-function(t,theta){exp((t*theta[1])^theta[2])*t^{theta[2]-1}*theta[1]^{theta[2]}+theta[2]*(
+      exp((t*theta[1])^theta[2])*theta[1]^{theta[2]}*t^{theta[2]-1}*log(theta[1])+theta[1]^{theta[2]}*(exp((t*theta[1])^theta[2])*theta[1]^{theta[2]}*t^{2*theta[2]-1}*log(t*theta[1])+exp((t*theta[1])^theta[2])*t^{theta[2]-1}*log(t)))}
+  
+  fit_a<-flexsurvreg(Surv(times,event)~1,dist = custom.gompt,data=data_optim)
+  theta1_a<-exp(fit_a$coefficients[1]) # exp(coeff[1])
+  theta2_a<-exp(fit_a$coefficients[2]) # exp(coeff[2])
+  
+  fit_b<-flexsurvreg(Surv(times,times/times)~1,dist = custom.gompt,data=data_optim)
+  theta1_b<-exp(fit_b$coefficients[1]) # exp(coeff[1])
+  theta2_b<-exp(fit_b$coefficients[2]) # exp(coeff[2])
+  
+  H_C<-function(c,gamma){ exp((c*gamma[1])^gamma[2])-1}
+  h_C<-function(c,gamma){gamma[2]*gamma[1]^{gamma[2]}* exp((c*gamma[1])^gamma[2])*c^{gamma[2]-1}}
+  log_h_C<-function(c,gamma){log(gamma[2]) + gamma[2]*log(gamma[1]) + (c*gamma[1])^gamma[2] + (gamma[2]-1)*log(c)}
+  dgamma1_H_C<-function(c,gamma){gamma[2]*exp((c*gamma[1])^gamma[2])*c^{gamma[2]}*gamma[1]^{gamma[2]-1}}
+  dgamma2_H_C<-function(c,gamma){exp((c*gamma[1])^gamma[2])*log(c*gamma[1])*(c*gamma[1])^{gamma[2]}}
+  dgamma1_h_C<-function(c,gamma){gamma[2]^{2}*c^{gamma[2]-1}*exp((c*gamma[1])^gamma[2])*(c^{gamma[2]}*gamma[1]^{2*gamma[2]-1}+gamma[1]^{gamma[2]-1})}
+  dgamma2_h_C<-function(c,gamma){exp((c*gamma[1])^gamma[2])*c^{gamma[2]-1}*gamma[1]^{gamma[2]}+gamma[2]*(
+      exp((c*gamma[1])^gamma[2])*gamma[1]^{gamma[2]}*c^{gamma[2]-1}*log(gamma[1])+gamma[1]^{gamma[2]}*(exp((c*gamma[1])^gamma[2])*gamma[1]^{gamma[2]}*c^{2*gamma[2]-1}*log(c*gamma[1])+exp((c*gamma[1])^gamma[2])*c^{gamma[2]-1}*log(c)))}
+  
+  fit_a<-flexsurvreg(Surv(times,event)~1,dist = custom.gompt,data=data_optim)
+  gamma1_a<-exp(fit_a$coefficients[1]) # exp(coeff[1])
+  gamma2_a<-exp(fit_a$coefficients[2]) # exp(coeff[2])
+  
+  fit_b<-flexsurvreg(Surv(times,times/times)~1,dist = custom.gompt,data=data_optim)
+  gamma1_b<-exp(fit_b$coefficients[1]) # exp(coeff[1]) 
+  gamma2_b<-exp(fit_b$coefficients[2]) # exp(coeff[2])
+  
+  initials_a <- c(theta1_a,theta2_a,gamma1_a,gamma2_a)
+  initials_b <- c(theta1_b,theta2_b,gamma1_b,gamma2_b)
+  
+  for (i in 1:length(alpha)){
+        
+
+       opt_a<-optim(par=initials_a,
+                        fn=loglikelihood2,
+                        gr=grad,
+                        alpha=alpha[i],
+                        H_T=H_T,
+                        H_C=H_C,
+                        H_alpha=H_alpha,
+                        H_alpha_inv=H_alpha_inv,
+                        log_h_alpha=log_h_alpha,
+                        log_h_C=log_h_C,
+                        log_h_T=log_h_T,
+                        h_C=h_C,
+                        h_T=h_T,
+                        h_alpha=h_alpha,
+                        dh_alpha=dh_alpha,
+                        dtheta1_H_T=dtheta1_H_T,
+                        dtheta2_H_T=dtheta2_H_T,
+                        dtheta1_h_T=dtheta1_h_T,
+                        dtheta2_h_T=dtheta2_h_T,
+                        dgamma1_H_C=dgamma1_H_C,
+                        dgamma2_H_C=dgamma2_H_C,
+                        dgamma1_h_C=dgamma1_h_C,
+                        dgamma2_h_C=dgamma2_h_C,
+                        data=data_optim,
+                        method="BFGS",
+                        control=list(fnscale=-1),
+                        hessian=TRUE)
+           
+       opt_b<-optim(par=initials_b,
+                        fn=loglikelihood2,
+                        gr=grad,
+                        alpha=alpha[i],
+                        H_T=H_T,
+                        H_C=H_C,
+                        H_alpha=H_alpha,
+                        H_alpha_inv=H_alpha_inv,
+                        log_h_alpha=log_h_alpha,
+                        log_h_C=log_h_C,
+                        log_h_T=log_h_T,
+                        h_C=h_C,
+                        h_T=h_T,
+                        h_alpha=h_alpha,
+                        dh_alpha=dh_alpha,
+                        dtheta1_H_T=dtheta1_H_T,
+                        dtheta2_H_T=dtheta2_H_T,
+                        dtheta1_h_T=dtheta1_h_T,
+                        dtheta2_h_T=dtheta2_h_T,
+                        dgamma1_H_C=dgamma1_H_C,
+                        dgamma2_H_C=dgamma2_H_C,
+                        dgamma1_h_C=dgamma1_h_C,
+                        dgamma2_h_C=dgamma2_h_C,
+                        data=data_optim,
+                        method="BFGS",
+                        control=list(fnscale=-1),
+                        hessian=TRUE )
+
+         
+        m_c <- max(opt_a$par[1]-opt_b$par[1],opt_a$par[2]-opt_b$par[2],opt_a$par[3]-opt_b$par[3],opt_a$par[4]-opt_b$par[4])
+        
+          if(abs(m_c) < tol){
+            max <- opt_a$par
+            hess <- opt_a$hessian
+        }else{
+          if(opt_b$value > opt_a$value){
+            max <- opt_b$par
+            hess <- opt_b$hessian
+          }else{
+            max <- opt_a$par
+            hess <- opt_a$hessian
+          }}
+
+        nas <- sum(is.na(hess))
+        inv_hess <- try(solve(-hess))
+        if((!is.na(nas)) & (class(inv_hess)!='try-error')){
+          se <- sqrt(diag(solve(-hess))) 
+        }else{
+          se <- rep(0,length(max))
+        }
+        
+        res_table23$convergence_a[i] <- opt_a$convergence
+        res_table23$convergence_b[i] <- opt_b$convergence
+        res_table23$alpha[i] <- alpha[i] 
+        res_table23$theta1[i] <- max[1]
+        res_table23$theta2[i] <- max[2]
+        res_table23$gamma1[i] <- max[3]
+        res_table23$gamma2[i] <- max[4]
+        res_table23$ci_theta1_min[i] <- max[1]-1.96*se[1]
+        res_table23$ci_theta1_max[i] <- max[1]+1.96*se[1]
+        res_table23$ci_theta2_min[i] <- max[2]-1.96*se[2] 
+        res_table23$ci_theta2_max[i] <- max[2]+1.96*se[2]
+        res_table23$ci_gamma1_min[i] <- max[3]-1.96*se[3]
+        res_table23$ci_gamma1_max[i] <- max[3]+1.96*se[3]
+        res_table23$ci_gamma2_min[i] <- max[4]-1.96*se[4]
+        res_table23$ci_gamma2_max[i] <- max[4]+1.96*se[4]
+  }
+
+```
+
+
+## Loglogistic(H_alpha) - Gompertz(t) - Loglogistic(c)
+
+```{r l-g-l}
+ res_table24 <- data.frame(matrix(ncol=length(names[[2]]),nrow=50,
+                                  dimnames=names))
+
+
+  H_alpha<-function(u,alpha){log(1+alpha*u)/alpha}
+  h_alpha<-function(u,alpha){1/(1+alpha*u)}
+  H_alpha_inv<-function(u,alpha){(1/alpha)*(exp(alpha*u)-1)} 
+  log_h_alpha<-function(u,alpha){- log(alpha*u+1)}
+  dh_alpha<-function(u,alpha){-alpha/(1+alpha*u)^{2}}
+  
+  #distribution of t
+  
+  H_T<-function(t,theta){ exp((t*theta[1])^theta[2])-1}
+  h_T<-function(t,theta){theta[2]*theta[1]^{theta[2]}* exp((t*theta[1])^theta[2])*t^{theta[2]-1}}
+  log_h_T<-function(t,theta){log(theta[2]) + theta[2]*log(theta[1]) + (t*theta[1])^theta[2] + (theta[2]-1)*log(t)}
+  dtheta1_H_T<-function(t,theta){theta[2]*exp((t*theta[1])^theta[2])*t^{theta[2]}*theta[1]^{theta[2]-1}}
+  dtheta2_H_T<-function(t,theta){exp((t*theta[1])^theta[2])*log(t*theta[1])*(t*theta[1])^{theta[2]}}
+  dtheta1_h_T<-function(t,theta){theta[2]^{2}*t^{theta[2]-1}*exp((t*theta[1])^theta[2])*(t^{theta[2]}*theta[1]^{2*theta[2]-1}+theta[1]^{theta[2]-1})}
+  dtheta2_h_T<-function(t,theta){exp((t*theta[1])^theta[2])*t^{theta[2]-1}*theta[1]^{theta[2]}+theta[2]*(
+      exp((t*theta[1])^theta[2])*theta[1]^{theta[2]}*t^{theta[2]-1}*log(theta[1])+theta[1]^{theta[2]}*(exp((t*theta[1])^theta[2])*theta[1]^{theta[2]}*t^{2*theta[2]-1}*log(t*theta[1])+exp((t*theta[1])^theta[2])*t^{theta[2]-1}*log(t)))}
+  
+  fit_a<-flexsurvreg(Surv(times,event)~1,dist = custom.gompt,data=data_optim)
+  theta1_a<-exp(fit_a$coefficients[1]) # exp(coeff[1])
+  theta2_a<-exp(fit_a$coefficients[2]) # exp(coeff[2])
+  
+  fit_b<-flexsurvreg(Surv(times,times/times)~1,dist = custom.gompt,data=data_optim)
+  theta1_b<-exp(fit_b$coefficients[1]) # exp(coeff[1])
+  theta2_b<-exp(fit_b$coefficients[2]) # exp(coeff[2])
+  
+  H_C<-function(c,gamma){ log(1+(c*gamma[1])^{gamma[2]})}
+  h_C<-function(c,gamma){(gamma[2]*gamma[1]^{gamma[2]}*c^{gamma[2]-1})/(1+(c*gamma[1])^{gamma[2]})}
+  log_h_C<-function(c,gamma){log(gamma[2]) + gamma[2]*log(gamma[1]) + (gamma[2]-1)*log(c)-log(1+(c*gamma[1])^{gamma[2]})}
+  dgamma1_H_C<-function(c,gamma){(gamma[2]*c^{gamma[2]}*gamma[1]^{gamma[2]-1})/(1+(c*gamma[1])^{gamma[2]})}
+  dgamma2_H_C<-function(c,gamma){(log(c*gamma[1])*(c*gamma[1])^{gamma[2]})/(1+(c*gamma[1])^{gamma[2]})}
+  dgamma1_h_C<-function(c,gamma){(gamma[2]^{2}*gamma[1]^{gamma[2]-1}*c^{gamma[2]-1})/((1+(c*gamma[1])^{gamma[2]})^{2})}
+  dgamma2_h_C<-function(c,gamma){(gamma[1]^{gamma[2]}*c^{gamma[2]-1}*(1+(gamma[1]*c)^{gamma[2]}+gamma[2]*log(c*gamma[1])))/((1+(c*gamma[1])^{gamma[2]})^{2})}
+  
+  fit_a<-survreg(Surv(times,event)~1,dist = 'loglogistic',data=data_optim)
+  gamma1_a<-exp(-fit_a$coefficients) 
+  gamma2_a<-1/fit_a$scale # 1/sigma 
+  
+  fit_b<-survreg(Surv(times,times/times)~1,dist = 'loglogistic',data=data_optim)
+  gamma1_b<-exp(-fit_b$coefficients) 
+  gamma2_b<-1/fit_b$scale # 1/sigma      
+  
+  initials_a <- c(theta1_a,theta2_a,gamma1_a,gamma2_a)
+  initials_b <- c(theta1_b,theta2_b,gamma1_b,gamma2_b)
+  
+  for (i in 1:length(alpha)){
+        
+
+       opt_a<-optim(par=initials_a,
+                        fn=loglikelihood2,
+                        gr=grad,
+                        alpha=alpha[i],
+                        H_T=H_T,
+                        H_C=H_C,
+                        H_alpha=H_alpha,
+                        H_alpha_inv=H_alpha_inv,
+                        log_h_alpha=log_h_alpha,
+                        log_h_C=log_h_C,
+                        log_h_T=log_h_T,
+                        h_C=h_C,
+                        h_T=h_T,
+                        h_alpha=h_alpha,
+                        dh_alpha=dh_alpha,
+                        dtheta1_H_T=dtheta1_H_T,
+                        dtheta2_H_T=dtheta2_H_T,
+                        dtheta1_h_T=dtheta1_h_T,
+                        dtheta2_h_T=dtheta2_h_T,
+                        dgamma1_H_C=dgamma1_H_C,
+                        dgamma2_H_C=dgamma2_H_C,
+                        dgamma1_h_C=dgamma1_h_C,
+                        dgamma2_h_C=dgamma2_h_C,
+                        data=data_optim,
+                        method="BFGS",
+                        control=list(fnscale=-1),
+                        hessian=TRUE)
+           
+       opt_b<-optim(par=initials_b,
+                        fn=loglikelihood2,
+                        gr=grad,
+                        alpha=alpha[i],
+                        H_T=H_T,
+                        H_C=H_C,
+                        H_alpha=H_alpha,
+                        H_alpha_inv=H_alpha_inv,
+                        log_h_alpha=log_h_alpha,
+                        log_h_C=log_h_C,
+                        log_h_T=log_h_T,
+                        h_C=h_C,
+                        h_T=h_T,
+                        h_alpha=h_alpha,
+                        dh_alpha=dh_alpha,
+                        dtheta1_H_T=dtheta1_H_T,
+                        dtheta2_H_T=dtheta2_H_T,
+                        dtheta1_h_T=dtheta1_h_T,
+                        dtheta2_h_T=dtheta2_h_T,
+                        dgamma1_H_C=dgamma1_H_C,
+                        dgamma2_H_C=dgamma2_H_C,
+                        dgamma1_h_C=dgamma1_h_C,
+                        dgamma2_h_C=dgamma2_h_C,
+                        data=data_optim,
+                        method="BFGS",
+                        control=list(fnscale=-1),
+                        hessian=TRUE )
+
+         
+        m_c <- max(opt_a$par[1]-opt_b$par[1],opt_a$par[2]-opt_b$par[2],opt_a$par[3]-opt_b$par[3],opt_a$par[4]-opt_b$par[4])
+        
+          if(abs(m_c) < tol){
+            max <- opt_a$par
+            hess <- opt_a$hessian
+        }else{
+          if(opt_b$value > opt_a$value){
+            max <- opt_b$par
+            hess <- opt_b$hessian
+          }else{
+            max <- opt_a$par
+            hess <- opt_a$hessian
+          }}
+
+        nas <- sum(is.na(hess))
+        inv_hess <- try(solve(-hess))
+        if((!is.na(nas)) & (class(inv_hess)!='try-error')){
+          se <- sqrt(diag(solve(-hess))) 
+        }else{
+          se <- rep(0,length(max))
+        }
+        
+        res_table24$convergence_a[i] <- opt_a$convergence
+        res_table24$convergence_b[i] <- opt_b$convergence
+        res_table24$alpha[i] <- alpha[i] 
+        res_table24$theta1[i] <- max[1]
+        res_table24$theta2[i] <- max[2]
+        res_table24$gamma1[i] <- max[3]
+        res_table24$gamma2[i] <- max[4]
+        res_table24$ci_theta1_min[i] <- max[1]-1.96*se[1]
+        res_table24$ci_theta1_max[i] <- max[1]+1.96*se[1]
+        res_table24$ci_theta2_min[i] <- max[2]-1.96*se[2]
+        res_table24$ci_theta2_max[i] <- max[2]+1.96*se[2]
+        res_table24$ci_gamma1_min[i] <- max[3]-1.96*se[3]
+        res_table24$ci_gamma1_max[i] <- max[3]+1.96*se[3]
+        res_table24$ci_gamma2_min[i] <- max[4]-1.96*se[4]
+        res_table24$ci_gamma2_max[i] <- max[4]+1.96*se[4]
+  }
+
+```
+
+
+
+## Loglogistic(H_alpha) - Loglogistic(t) - Weibull(C)
+
+```{r l-l-w}
+ res_table25 <- data.frame(matrix(ncol=length(names[[2]]),nrow=50,
+                                  dimnames=names))
+
+
+  H_alpha<-function(u,alpha){log(1+alpha*u)/alpha}
+  h_alpha<-function(u,alpha){1/(1+alpha*u)}
+  H_alpha_inv<-function(u,alpha){(1/alpha)*(exp(alpha*u)-1)} 
+  log_h_alpha<-function(u,alpha){- log(alpha*u+1)}
+  dh_alpha<-function(u,alpha){-alpha/(1+alpha*u)^{2}}
+  
+  #distribution of t
+  
+  H_T<-function(t,theta){ log(1+(t*theta[1])^{theta[2]})}
+  h_T<-function(t,theta){(theta[2]*theta[1]^{theta[2]}*t^{theta[2]-1})/(1+(t*theta[1])^{theta[2]})}
+  log_h_T<-function(t,theta){log(theta[2]) + theta[2]*log(theta[1]) + (theta[2]-1)*log(t)-log(1+(t*theta[1])^{theta[2]})}
+  dtheta1_H_T<-function(t,theta){(theta[2]*t^{theta[2]}*theta[1]^{theta[2]-1})/(1+(t*theta[1])^{theta[2]})}
+  dtheta2_H_T<-function(t,theta){(log(t*theta[1])*(t*theta[1])^{theta[2]})/(1+(t*theta[1])^{theta[2]})}
+  dtheta1_h_T<-function(t,theta){(theta[2]^{2}*theta[1]^{theta[2]-1}*t^{theta[2]-1})/((1+(t*theta[1])^{theta[2]})^{2})}
+  dtheta2_h_T<-function(t,theta){(theta[1]^{theta[2]}*t^{theta[2]-1}*(1+(theta[1]*t)^{theta[2]}+theta[2]*log(t*theta[1])))/((1+(t*theta[1])^{theta[2]})^{2})}
+  
+  fit_a<-survreg(Surv(times,event)~1,dist = 'loglogistic',data=data_optim)
+  theta1_a<-as.numeric(exp(-fit_a$coefficients)) # exp(-mu)
+  theta2_a<-1/fit_a$scale # 1/sigma 
+  
+  fit_b<-survreg(Surv(times,times/times)~1,dist = 'loglogistic',data=data_optim)
+  theta1_b<-as.numeric(exp(-fit_b$coefficients)) # exp(-mu)
+  theta2_b<-1/fit_b$scale # 1/sigma 
+  
+  H_C<-function(c,gamma){ (c*gamma[1])^gamma[2]}
+  h_C <-function(c,gamma){gamma[2]*gamma[1]^{gamma[2]}*c^{gamma[2]-1}}
+  log_h_C<-function(c,gamma){log(gamma[2]) + gamma[2]*log(gamma[1]) + (gamma[2]-1)*log(c)}
+  dgamma1_H_C<-function(c,gamma){gamma[2]*c^{gamma[2]}*gamma[1]^{gamma[2]-1}}
+  dgamma2_H_C<-function(c,gamma){(c*gamma[1])^{gamma[2]}*log(c*gamma[1])}
+  dgamma1_h_C<-function(c,gamma){gamma[2]^{2}*(gamma[1]*c)^{gamma[2]-1}}
+  dgamma2_h_C<-function(c,gamma){gamma[1]^{gamma[2]}*c^{gamma[2]-1}+gamma[2]*gamma[1]^{gamma[2]}*c^{gamma[2]-1}*(log(gamma[1])+log(c))}
+  
+  
+  fit_a<-survreg(Surv(times,event)~1,dist = 'weibull',data=data_optim)
+  gamma1_a<-as.numeric(exp(-fit_a$coefficients)) # exp(-mu)
+  gamma2_a<-1/fit_a$scale # 1/sigma 
+  
+  fit_b<-survreg(Surv(times,times/times)~1,dist = 'weibull',data=data_optim)
+  gamma1_b<-as.numeric(exp(-fit_b$coefficients)) # exp(-mu)
+  gamma2_b<-1/fit_b$scale # 1/sigma 
+  
+  initials_a <- c(theta1_a,theta2_a,gamma1_a,gamma2_a)
+  initials_b <- c(theta1_b,theta2_b,gamma1_b,gamma2_b)
+  
+  for (i in 1:length(alpha)){
+        
+
+       opt_a<-optim(par=initials_a,
+                        fn=loglikelihood2,
+                        gr=grad,
+                        alpha=alpha[i],
+                        H_T=H_T,
+                        H_C=H_C,
+                        H_alpha=H_alpha,
+                        H_alpha_inv=H_alpha_inv,
+                        log_h_alpha=log_h_alpha,
+                        log_h_C=log_h_C,
+                        log_h_T=log_h_T,
+                        h_C=h_C,
+                        h_T=h_T,
+                        h_alpha=h_alpha,
+                        dh_alpha=dh_alpha,
+                        dtheta1_H_T=dtheta1_H_T,
+                        dtheta2_H_T=dtheta2_H_T,
+                        dtheta1_h_T=dtheta1_h_T,
+                        dtheta2_h_T=dtheta2_h_T,
+                        dgamma1_H_C=dgamma1_H_C,
+                        dgamma2_H_C=dgamma2_H_C,
+                        dgamma1_h_C=dgamma1_h_C,
+                        dgamma2_h_C=dgamma2_h_C,
+                        data=data_optim,
+                        method="BFGS",
+                        control=list(fnscale=-1),
+                        hessian=TRUE)
+           
+       opt_b<-optim(par=initials_b,
+                        fn=loglikelihood2,
+                        gr=grad,
+                        alpha=alpha[i],
+                        H_T=H_T,
+                        H_C=H_C,
+                        H_alpha=H_alpha,
+                        H_alpha_inv=H_alpha_inv,
+                        log_h_alpha=log_h_alpha,
+                        log_h_C=log_h_C,
+                        log_h_T=log_h_T,
+                        h_C=h_C,
+                        h_T=h_T,
+                        h_alpha=h_alpha,
+                        dh_alpha=dh_alpha,
+                        dtheta1_H_T=dtheta1_H_T,
+                        dtheta2_H_T=dtheta2_H_T,
+                        dtheta1_h_T=dtheta1_h_T,
+                        dtheta2_h_T=dtheta2_h_T,
+                        dgamma1_H_C=dgamma1_H_C,
+                        dgamma2_H_C=dgamma2_H_C,
+                        dgamma1_h_C=dgamma1_h_C,
+                        dgamma2_h_C=dgamma2_h_C,
+                        data=data_optim,
+                        method="BFGS",
+                        control=list(fnscale=-1),
+                        hessian=TRUE )
+
+         
+        m_c <- max(opt_a$par[1]-opt_b$par[1],opt_a$par[2]-opt_b$par[2],opt_a$par[3]-opt_b$par[3],opt_a$par[4]-opt_b$par[4])
+        
+          if(abs(m_c) < tol){
+            max <- opt_a$par
+            hess <- opt_a$hessian
+        }else{
+          if(opt_b$value > opt_a$value){
+            max <- opt_b$par
+            hess <- opt_b$hessian
+          }else{
+            max <- opt_a$par
+            hess <- opt_a$hessian
+          }}
+
+        nas <- sum(is.na(hess))
+        inv_hess <- try(solve(-hess))
+        if((!is.na(nas)) & (class(inv_hess)!='try-error')){
+          se <- sqrt(diag(solve(-hess))) 
+        }else{
+          se <- rep(0,length(max))
+        }
+        
+        res_table25$convergence_a[i] <- opt_a$convergence
+        res_table25$convergence_b[i] <- opt_b$convergence
+        res_table25$alpha[i] <- alpha[i] 
+        res_table25$theta1[i] <- max[1]
+        res_table25$theta2[i] <- max[2]
+        res_table25$gamma1[i] <- max[3]
+        res_table25$gamma2[i] <- max[4]
+        res_table25$ci_theta1_min[i] <- max[1]-1.96*se[1]
+        res_table25$ci_theta1_max[i] <- max[1]+1.96*se[1]
+        res_table25$ci_theta2_min[i] <- max[2]-1.96*se[2]
+        res_table25$ci_theta2_max[i] <- max[2]+1.96*se[2]
+        res_table25$ci_gamma1_min[i] <- max[3]-1.96*se[3]
+        res_table25$ci_gamma1_max[i] <- max[3]+1.96*se[3]
+        res_table25$ci_gamma2_min[i] <- max[4]-1.96*se[4]
+        res_table25$ci_gamma2_max[i] <- max[4]+1.96*se[4]
+  }
+
+```
+
+
+
+## Loglogistic(H_alpha) - Loglogistic(t) - Gompertz(C)
+
+```{r l-l-g}
+ res_table26 <- data.frame(matrix(ncol=length(names[[2]]),nrow=50,
+                                  dimnames=names))
+
+
+  H_alpha<-function(u,alpha){log(1+alpha*u)/alpha}
+  h_alpha<-function(u,alpha){1/(1+alpha*u)}
+  H_alpha_inv<-function(u,alpha){(1/alpha)*(exp(alpha*u)-1)} 
+  log_h_alpha<-function(u,alpha){- log(alpha*u+1)}
+  dh_alpha<-function(u,alpha){-alpha/(1+alpha*u)^{2}}
+  
+  #distribution of t
+  
+  H_T<-function(t,theta){ log(1+(t*theta[1])^{theta[2]})}
+  h_T<-function(t,theta){(theta[2]*theta[1]^{theta[2]}*t^{theta[2]-1})/(1+(t*theta[1])^{theta[2]})}
+  log_h_T<-function(t,theta){log(theta[2]) + theta[2]*log(theta[1]) + (theta[2]-1)*log(t)-log(1+(t*theta[1])^{theta[2]})}
+  dtheta1_H_T<-function(t,theta){(theta[2]*t^{theta[2]}*theta[1]^{theta[2]-1})/(1+(t*theta[1])^{theta[2]})}
+  dtheta2_H_T<-function(t,theta){(log(t*theta[1])*(t*theta[1])^{theta[2]})/(1+(t*theta[1])^{theta[2]})}
+  dtheta1_h_T<-function(t,theta){(theta[2]^{2}*theta[1]^{theta[2]-1}*t^{theta[2]-1})/((1+(t*theta[1])^{theta[2]})^{2})}
+  dtheta2_h_T<-function(t,theta){(theta[1]^{theta[2]}*t^{theta[2]-1}*(1+(theta[1]*t)^{theta[2]}+theta[2]*log(t*theta[1])))/((1+(t*theta[1])^{theta[2]})^{2})}
+  
+  fit_a<-survreg(Surv(times,event)~1,dist = 'loglogistic',data=data_optim)
+  theta1_a<-as.numeric(exp(-fit_a$coefficients)) # exp(-mu) 
+  theta2_a<-1/fit_a$scale # 1/sigma 
+  
+  fit_b<-survreg(Surv(times,times/times)~1,dist = 'loglogistic',data=data_optim)
+  theta1_b<-as.numeric(exp(-fit_b$coefficients)) # exp(-mu)
+  theta2_b<-1/fit_b$scale # 1/sigma 
+  
+  H_C<-function(c,gamma){ exp((c*gamma[1])^gamma[2])-1}
+  h_C<-function(c,gamma){gamma[2]*gamma[1]^{gamma[2]}* exp((c*gamma[1])^gamma[2])*c^{gamma[2]-1}}
+  log_h_C<-function(c,gamma){log(gamma[2]) + gamma[2]*log(gamma[1]) + (c*gamma[1])^gamma[2] + (gamma[2]-1)*log(c)}
+  dgamma1_H_C<-function(c,gamma){gamma[2]*exp((c*gamma[1])^gamma[2])*c^{gamma[2]}*gamma[1]^{gamma[2]-1}}
+  dgamma2_H_C<-function(c,gamma){exp((c*gamma[1])^gamma[2])*log(c*gamma[1])*(c*gamma[1])^{gamma[2]}}
+  dgamma1_h_C<-function(c,gamma){gamma[2]^{2}*c^{gamma[2]-1}*exp((c*gamma[1])^gamma[2])*(c^{gamma[2]}*gamma[1]^{2*gamma[2]-1}+gamma[1]^{gamma[2]-1})}
+  dgamma2_h_C<-function(c,gamma){exp((c*gamma[1])^gamma[2])*c^{gamma[2]-1}*gamma[1]^{gamma[2]}+gamma[2]*(
+      exp((c*gamma[1])^gamma[2])*gamma[1]^{gamma[2]}*c^{gamma[2]-1}*log(gamma[1])+gamma[1]^{gamma[2]}*(exp((c*gamma[1])^gamma[2])*gamma[1]^{gamma[2]}*c^{2*gamma[2]-1}*log(c*gamma[1])+exp((c*gamma[1])^gamma[2])*c^{gamma[2]-1}*log(c)))}
+  
+  fit_a<-flexsurvreg(Surv(times,event)~1,dist = custom.gompt,data=data_optim)
+  gamma1_a<-exp(fit_a$coefficients[1]) # exp(coeff[1])
+  gamma2_a<-exp(fit_a$coefficients[2]) # exp(coeff[2])
+  
+  fit_b<-flexsurvreg(Surv(times,times/times)~1,dist = custom.gompt,data=data_optim)
+  gamma1_b<-exp(fit_b$coefficients[1]) # exp(coeff[1]) 
+  gamma2_b<-exp(fit_b$coefficients[2]) # exp(coeff[2])
+  
+  initials_a <- c(theta1_a,theta2_a,gamma1_a,gamma2_a)
+  initials_b <- c(theta1_b,theta2_b,gamma1_b,gamma2_b)
+  
+  for (i in 1:length(alpha)){
+        
+
+       opt_a<-optim(par=initials_a,
+                        fn=loglikelihood2,
+                        gr=grad,
+                        alpha=alpha[i],
+                        H_T=H_T,
+                        H_C=H_C,
+                        H_alpha=H_alpha,
+                        H_alpha_inv=H_alpha_inv,
+                        log_h_alpha=log_h_alpha,
+                        log_h_C=log_h_C,
+                        log_h_T=log_h_T,
+                        h_C=h_C,
+                        h_T=h_T,
+                        h_alpha=h_alpha,
+                        dh_alpha=dh_alpha,
+                        dtheta1_H_T=dtheta1_H_T,
+                        dtheta2_H_T=dtheta2_H_T,
+                        dtheta1_h_T=dtheta1_h_T,
+                        dtheta2_h_T=dtheta2_h_T,
+                        dgamma1_H_C=dgamma1_H_C,
+                        dgamma2_H_C=dgamma2_H_C,
+                        dgamma1_h_C=dgamma1_h_C,
+                        dgamma2_h_C=dgamma2_h_C,
+                        data=data_optim,
+                        method="BFGS",
+                        control=list(fnscale=-1),
+                        hessian=TRUE)
+           
+       opt_b<-optim(par=initials_b,
+                        fn=loglikelihood2,
+                        gr=grad,
+                        alpha=alpha[i],
+                        H_T=H_T,
+                        H_C=H_C,
+                        H_alpha=H_alpha,
+                        H_alpha_inv=H_alpha_inv,
+                        log_h_alpha=log_h_alpha,
+                        log_h_C=log_h_C,
+                        log_h_T=log_h_T,
+                        h_C=h_C,
+                        h_T=h_T,
+                        h_alpha=h_alpha,
+                        dh_alpha=dh_alpha,
+                        dtheta1_H_T=dtheta1_H_T,
+                        dtheta2_H_T=dtheta2_H_T,
+                        dtheta1_h_T=dtheta1_h_T,
+                        dtheta2_h_T=dtheta2_h_T,
+                        dgamma1_H_C=dgamma1_H_C,
+                        dgamma2_H_C=dgamma2_H_C,
+                        dgamma1_h_C=dgamma1_h_C,
+                        dgamma2_h_C=dgamma2_h_C,
+                        data=data_optim,
+                        method="BFGS",
+                        control=list(fnscale=-1),
+                        hessian=TRUE )
+
+         
+        m_c <- max(opt_a$par[1]-opt_b$par[1],opt_a$par[2]-opt_b$par[2],opt_a$par[3]-opt_b$par[3],opt_a$par[4]-opt_b$par[4])
+        
+          if(abs(m_c) < tol){
+            max <- opt_a$par
+            hess <- opt_a$hessian
+        }else{
+          if(opt_b$value > opt_a$value){
+            max <- opt_b$par
+            hess <- opt_b$hessian
+          }else{
+            max <- opt_a$par
+            hess <- opt_a$hessian
+          }}
+
+        nas <- sum(is.na(hess))
+        inv_hess <- try(solve(-hess))
+        if((!is.na(nas)) & (class(inv_hess)!='try-error')){
+          se <- sqrt(diag(solve(-hess))) 
+        }else{
+          se <- rep(0,length(max))
+        }
+        
+        res_table26$convergence_a[i] <- opt_a$convergence
+        res_table26$convergence_b[i] <- opt_b$convergence
+        res_table26$alpha[i] <- alpha[i] 
+        res_table26$theta1[i] <- max[1]
+        res_table26$theta2[i] <- max[2]
+        res_table26$gamma1[i] <- max[3]
+        res_table26$gamma2[i] <- max[4]
+        res_table26$ci_theta1_min[i] <- max[1]-1.96*se[1]
+        res_table26$ci_theta1_max[i] <- max[1]+1.96*se[1]
+        res_table26$ci_theta2_min[i] <- max[2]-1.96*se[2]
+        res_table26$ci_theta2_max[i] <- max[2]+1.96*se[2]
+        res_table26$ci_gamma1_min[i] <- max[3]-1.96*se[3]
+        res_table26$ci_gamma1_max[i] <- max[3]+1.96*se[3]
+        res_table26$ci_gamma2_min[i] <- max[4]-1.96*se[4]
+        res_table26$ci_gamma2_max[i] <- max[4]+1.96*se[4]
+  }
+
+```
+
+
+## Loglogistic(H_alpha) - Loglogistic(t) - Loglogistic(C)
+
+```{r l-l-l}
+ res_table27 <- data.frame(matrix(ncol=length(names[[2]]),nrow=50,
+                                  dimnames=names))
+
+
+  H_alpha<-function(u,alpha){log(1+alpha*u)/alpha}
+  h_alpha<-function(u,alpha){1/(1+alpha*u)}
+  H_alpha_inv<-function(u,alpha){(1/alpha)*(exp(alpha*u)-1)} 
+  log_h_alpha<-function(u,alpha){- log(alpha*u+1)}
+  dh_alpha<-function(u,alpha){-alpha/(1+alpha*u)^{2}}
+  
+  #distribution of t
+  
+  H_T<-function(t,theta){ log(1+(t*theta[1])^{theta[2]})}
+  h_T<-function(t,theta){(theta[2]*theta[1]^{theta[2]}*t^{theta[2]-1})/(1+(t*theta[1])^{theta[2]})}
+  log_h_T<-function(t,theta){log(theta[2]) + theta[2]*log(theta[1]) + (theta[2]-1)*log(t)-log(1+(t*theta[1])^{theta[2]})}
+  dtheta1_H_T<-function(t,theta){(theta[2]*t^{theta[2]}*theta[1]^{theta[2]-1})/(1+(t*theta[1])^{theta[2]})}
+  dtheta2_H_T<-function(t,theta){(log(t*theta[1])*(t*theta[1])^{theta[2]})/(1+(t*theta[1])^{theta[2]})}
+  dtheta1_h_T<-function(t,theta){(theta[2]^{2}*theta[1]^{theta[2]-1}*t^{theta[2]-1})/((1+(t*theta[1])^{theta[2]})^{2})}
+  dtheta2_h_T<-function(t,theta){(theta[1]^{theta[2]}*t^{theta[2]-1}*(1+(theta[1]*t)^{theta[2]}+theta[2]*log(t*theta[1])))/((1+(t*theta[1])^{theta[2]})^{2})}
+  
+  fit_a<-survreg(Surv(times,event)~1,dist = 'loglogistic',data=data_optim)
+  theta1_a<-as.numeric(exp(-fit_a$coefficients)) # exp(-mu)
+  theta2_a<-1/fit_a$scale # 1/sigma 
+  
+  fit_b<-survreg(Surv(times,times/times)~1,dist = 'loglogistic',data=data_optim)
+  theta1_b<-as.numeric(exp(-fit_b$coefficients)) # exp(-mu)
+  theta2_b<-1/fit_b$scale # 1/sigma 
+        
+  
+  #distribution of c
+        
+  H_C<-function(c,gamma){ log(1+(c*gamma[1])^{gamma[2]})}
+  h_C<-function(c,gamma){(gamma[2]*gamma[1]^{gamma[2]}*c^{gamma[2]-1})/(1+(c*gamma[1])^{gamma[2]})}
+  log_h_C<-function(c,gamma){log(gamma[2]) + gamma[2]*log(gamma[1]) + (gamma[2]-1)*log(c)-log(1+(c*gamma[1])^{gamma[2]})}
+  dgamma1_H_C<-function(c,gamma){(gamma[2]*c^{gamma[2]}*gamma[1]^{gamma[2]-1})/(1+(c*gamma[1])^{gamma[2]})}
+  dgamma2_H_C<-function(c,gamma){(log(c*gamma[1])*(c*gamma[1])^{gamma[2]})/(1+(c*gamma[1])^{gamma[2]})}
+  dgamma1_h_C<-function(c,gamma){(gamma[2]^{2}*gamma[1]^{gamma[2]-1}*c^{gamma[2]-1})/((1+(c*gamma[1])^{gamma[2]})^{2})}
+  dgamma2_h_C<-function(c,gamma){(gamma[1]^{gamma[2]}*c^{gamma[2]-1}*(1+(gamma[1]*c)^{gamma[2]}+gamma[2]*log(c*gamma[1])))/((1+(c*gamma[1])^{gamma[2]})^{2})}
+  
+  fit_a<-survreg(Surv(times,event)~1,dist = 'loglogistic',data=data_optim)
+  gamma1_a<-exp(-fit_a$coefficients) 
+  gamma2_a<-1/fit_a$scale # 1/sigma 
+  
+  fit_b<-survreg(Surv(times,times/times)~1,dist = 'loglogistic',data=data_optim)
+  gamma1_b<-exp(-fit_b$coefficients) 
+  gamma2_b<-1/fit_b$scale # 1/sigma 
+  
+  initials_a <- c(theta1_a,theta2_a,gamma1_a,gamma2_a)
+  initials_b <- c(theta1_b,theta2_b,gamma1_b,gamma2_b)
+  
+  for (i in 1:length(alpha)){
+        
+
+       opt_a<-optim(par=initials_a,
+                        fn=loglikelihood2,
+                        gr=grad,
+                        alpha=alpha[i],
+                        H_T=H_T,
+                        H_C=H_C,
+                        H_alpha=H_alpha,
+                        H_alpha_inv=H_alpha_inv,
+                        log_h_alpha=log_h_alpha,
+                        log_h_C=log_h_C,
+                        log_h_T=log_h_T,
+                        h_C=h_C,
+                        h_T=h_T,
+                        h_alpha=h_alpha,
+                        dh_alpha=dh_alpha,
+                        dtheta1_H_T=dtheta1_H_T,
+                        dtheta2_H_T=dtheta2_H_T,
+                        dtheta1_h_T=dtheta1_h_T,
+                        dtheta2_h_T=dtheta2_h_T,
+                        dgamma1_H_C=dgamma1_H_C,
+                        dgamma2_H_C=dgamma2_H_C,
+                        dgamma1_h_C=dgamma1_h_C,
+                        dgamma2_h_C=dgamma2_h_C,
+                        data=data_optim,
+                        method="BFGS",
+                        control=list(fnscale=-1),
+                        hessian=TRUE)
+           
+       opt_b<-optim(par=initials_b,
+                        fn=loglikelihood2,
+                        gr=grad,
+                        alpha=alpha[i],
+                        H_T=H_T,
+                        H_C=H_C,
+                        H_alpha=H_alpha,
+                        H_alpha_inv=H_alpha_inv,
+                        log_h_alpha=log_h_alpha,
+                        log_h_C=log_h_C,
+                        log_h_T=log_h_T,
+                        h_C=h_C,
+                        h_T=h_T,
+                        h_alpha=h_alpha,
+                        dh_alpha=dh_alpha,
+                        dtheta1_H_T=dtheta1_H_T,
+                        dtheta2_H_T=dtheta2_H_T,
+                        dtheta1_h_T=dtheta1_h_T,
+                        dtheta2_h_T=dtheta2_h_T,
+                        dgamma1_H_C=dgamma1_H_C,
+                        dgamma2_H_C=dgamma2_H_C,
+                        dgamma1_h_C=dgamma1_h_C,
+                        dgamma2_h_C=dgamma2_h_C,
+                        data=data_optim,
+                        method="BFGS",
+                        control=list(fnscale=-1),
+                        hessian=TRUE )
+
+         
+        m_c <- max(opt_a$par[1]-opt_b$par[1],opt_a$par[2]-opt_b$par[2],opt_a$par[3]-opt_b$par[3],opt_a$par[4]-opt_b$par[4])
+        
+          if(abs(m_c) < tol){
+            max <- opt_a$par
+            hess <- opt_a$hessian
+        }else{
+          if(opt_b$value > opt_a$value){
+            max <- opt_b$par
+            hess <- opt_b$hessian
+          }else{
+            max <- opt_a$par
+            hess <- opt_a$hessian
+          }}
+
+        nas <- sum(is.na(hess))
+        inv_hess <- try(solve(-hess))
+        if((!is.na(nas)) & (class(inv_hess)!='try-error')){
+          se <- sqrt(diag(solve(-hess))) 
+        }else{
+          se <- rep(0,length(max))
+        }
+        
+        res_table27$convergence_a[i] <- opt_a$convergence
+        res_table27$convergence_b[i] <- opt_b$convergence
+        res_table27$alpha[i] <- alpha[i] 
+        res_table27$theta1[i] <- max[1]
+        res_table27$theta2[i] <- max[2]
+        res_table27$gamma1[i] <- max[3]
+        res_table27$gamma2[i] <- max[4]
+        res_table27$ci_theta1_min[i] <- max[1]-1.96*se[1]
+        res_table27$ci_theta1_max[i] <- max[1]+1.96*se[1]
+        res_table27$ci_theta2_min[i] <- max[2]-1.96*se[2]
+        res_table27$ci_theta2_max[i] <- max[2]+1.96*se[2]
+        res_table27$ci_gamma1_min[i] <- max[3]-1.96*se[3]
+        res_table27$ci_gamma1_max[i] <- max[3]+1.96*se[3]
+        res_table27$ci_gamma2_min[i] <- max[4]-1.96*se[4]
+        res_table27$ci_gamma2_max[i] <- max[4]+1.96*se[4]
+  }
+
+```
+
+
+
+
+
+
+
+
+
+

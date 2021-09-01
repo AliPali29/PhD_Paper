@@ -1,0 +1,185 @@
+---
+title: "Non-informative censoring computations"
+author: "Despina Konstantinidou"
+date: "17/06/2021"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+#packages
+library(tidyverse)
+library(survival)
+library(asaur)
+library(modelr)
+library(broom)
+library(haven)
+library(flexsurv)
+
+```
+
+
+## Data
+
+```{r, warning=FALSE, echo=FALSE,message=FALSE}
+data <- read.table("liverdata.dat",fileEncoding = "UTF-8",header=TRUE,na=".")
+
+# simple correction for observed zero times
+data$survtime<-ifelse(data$survtime==0,data$survtime+0.5,data$survtime)
+data <- data.frame(data)
+
+```
+
+The general principle is that both packages `survival` and `flexsurv` assume non-informative censoring by default and we only define the custom distrubutions that we want to use. For each custom distribution we check if it gives the same results as the pre-loaded distributions in flexusurv, except for a sign changed in the location paramters.
+
+
+## Weibull
+
+```{r w, warning=FALSE, echo=FALSE,message=FALSE}
+
+#custom Weibull
+Hweib<-function(x,theta1,theta2){
+  (theta1*x)^theta2
+}
+
+hweib<-function(x,theta1,theta2){
+ theta2*theta1^theta2*x^{theta2-1}
+}
+
+custom.weib <- list(name = "weib",  
+                      pars = c("theta1", "theta2"),
+                      location = "theta1", 
+                      transforms = c(log, log),
+                      inv.transforms = c(exp, exp), 
+                      inits = function(t) c(exp(-median(log(t))), 1/mad(log(t),constant=1)))
+
+
+# null model
+fit_weib_no_cov <- flexsurvreg(Surv(survtime,status) ~ 1, 
+                      data = data,
+                      dist = custom.weib)
+
+# covariate model
+fit_weib_cov <- flexsurvreg(Surv(survtime,status) ~ UKELD+recip_age, 
+                      data = data,
+                      dist = custom.weib)
+```
+
+```{r}
+# pre-loaded Weibull
+
+# null model
+fit_weib_no_cov1 <- flexsurvreg(Surv(survtime,status) ~ 1, 
+                      data = data,
+                      dist = 'weibull')
+
+# covariate model
+fit_weib_cov1 <- flexsurvreg(Surv(survtime,status) ~ UKELD + recip_age, 
+                      data = data,
+                      dist = 'weibull')
+```
+
+
+
+## Gompertz
+
+
+```{r g, warning=FALSE, echo=FALSE,message=FALSE}
+
+#custom Gompertz
+Hgompt<-function(x,theta1,theta2){
+  exp((theta1*x)^theta2)-1
+}
+hgompt<-function(x,theta1,theta2){
+ theta1*theta2*((theta1*x)^{theta2-1})*exp((theta1*x)^theta2)
+}
+
+custom.gompt <- list(name = "gompt",  
+                      pars = c("theta1", "theta2"),
+                      location = "theta1", 
+                      transforms = c(log, log),
+                      inv.transforms = c(exp, exp), 
+                      inits = function(t) c(0.001,1))
+
+
+
+# null model
+fit_gompt_no_cov <- flexsurvreg(Surv(survtime,status) ~ 1, 
+                      data = data,
+                      dist = custom.gompt)
+
+# covariate model
+fit_gompt_cov <- flexsurvreg(Surv(survtime,status) ~ UKELD + recip_age, 
+                      data = data,
+                      dist = custom.gompt)
+
+```
+
+```{r}
+# pre-loaded Gompertz
+fit_gompt_no_cov1 <- flexsurvreg(Surv(survtime,status) ~ 1, 
+                      data = data,
+                      dist = 'gompertz')
+
+# covariate model
+fit_gompt_cov1 <- flexsurvreg(Surv(survtime,status) ~ UKELD+recip_age, 
+                      data = data,
+                      dist = 'gompertz')
+
+```
+
+
+
+## Log-logistic
+
+```{r,warning=FALSE, echo=FALSE,message=FALSE}
+
+#custom Log-logistic
+Hllog<-function(x,theta1,theta2){
+  log(1+(theta1*x)^theta2)
+}
+hllog<-function(x,theta1,theta2){
+ (theta2*theta1^{theta2}*x^{theta2-1})/(1+(theta1*x)^theta2)
+}
+
+custom.llog <- list(name = "llog",  
+                  pars = c("theta1", "theta2"),
+                  location = "theta1", 
+                  transforms = c(log, log),
+                  inv.transforms = c(exp, exp), 
+                  inits = function(t) c(exp(-median(log(t))), 
+                                        1/mad(log(t),constant=1)))
+
+# null model
+fit_ll_no_cov <- flexsurvreg(Surv(survtime,status) ~ 1, 
+                      data = data,
+                      dist = custom.llog)
+
+# covariate model
+fit_ll_cov <- flexsurvreg(Surv(survtime,status) ~ UKELD + recip_age, 
+                      data = data,
+                      dist = custom.llog)
+
+
+```
+
+```{r}
+#pre-loaded Log-logistic
+
+# null model
+fit_ll_no_cov1 <- flexsurvreg(Surv(survtime,status) ~ 1, 
+                      data = data,
+                      dist = 'llogis')
+
+# covariate model
+fit_ll_cov1 <- flexsurvreg(Surv(survtime,status) ~ UKELD+recip_age, 
+                      data = data,
+                      dist = 'llogis')
+```
+
+
+
+
