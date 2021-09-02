@@ -15,5 +15,5 @@ The main files are the following:
 
 * 'non_informative_censoring.Rmd' is  the R markdown file for the non-informative regression models using `flexsurv`
 
-The codes from in the first two files run multiple iterations, and thus the running time is very long. We only provide the code for the core functions without the visualisations as the depend on the interpetation format.
+The codes from the first two files run multiple iterations, and thus the running time is very long. We only provide the code for the core functions without the visualisations as the depend on the interpetation format.
 
