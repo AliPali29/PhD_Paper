@@ -36,6 +36,11 @@ data_optim<-data.frame(times=data$survtime,event=data$status)
 
 # Log-likelihood
 
+$$
+l(\theta, \gamma, \alpha|data) = \sum_{i=1}^n \big[ log R(y_i) +log h_\alpha(H_C(y_i)) + log h_C(y_i) +\beta_i\{log h_alpha(H_T(y_i)) + log h_t(y_i) - log h_\alpha(H_C(y_i)) - log h_C(y_i)\} \big]
+$$
+
+
 ```{r}
 loglikelihood2<-function(par,alpha,
                          H_T,H_C,
